@@ -75,7 +75,19 @@ Other:
 - backup pictures and downloads
 - don’t forget to run FolderSync to copy new backups to server
 
+## Options
+
+App freezing:
+
+- [SuperFreezZ](https://gitlab.com/SuperFreezZ/SuperFreezZ): discontinued
+- [BatteryTool](https://github.com/Domi04151309/BatteryTool): app gets updated, but builds are not published for 2 years already
+
 ## Optional
+
+Might use in the future:
+
+- https://github.com/celzero/rethink-app: does not have option to run as root
+- https://github.com/TrackerControl/tracker-control-android: does not have option to run as root
 
 Apps no longer in use/installed:
 
