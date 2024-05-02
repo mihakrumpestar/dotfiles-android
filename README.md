@@ -79,8 +79,8 @@ Other:
 
 Apps no longer in use/installed:
 
-- Next Player
-- AdAway
+- X - Twitter: replace with Squawker
+- AdAway: does not work with KernelSU
 - APKUpdater
 - OnlyOffice
 - [ReVanced](https://revanced.org/#main): non-root install ReVanced and microG
@@ -89,8 +89,7 @@ Apps no longer in use/installed:
 - geteduroam → Login collage Wi-Fi access
 - Davx5
 - MX Player
-- Flud
-- Battery Charge Limit: input_suspend
+- Battery Charge Limit: input_suspend - deprecated
 - MyFitnessPal → Login
 - AccuBattery → Enable all permissions
 - Shelter → for sandboxing apps (allows having a second cloned app)
