@@ -73,7 +73,7 @@ Manually install `EasyPark: net.easypark.android` from `Aurora Store`.
 Other:
 
 - backup pictures and downloads
-- don’t forget to run FolderSync to copy new backups to server
+- don’t forget to run Round Sync to copy new backups to server
 
 ## Options
 
@@ -84,6 +84,12 @@ App freezing:
 
 ## Optional
 
+No needing currently:
+
+- https://github.com/nikita-yfh/android-adb-tools
+- https://apkpure.net/cssbuy/cn.onebound.cssbuy
+- https://github.com/readrops/Readrops
+
 Might use in the future:
 
 - https://github.com/celzero/rethink-app: does not have option to run as root
@@ -91,9 +97,10 @@ Might use in the future:
 
 Apps no longer in use/installed:
 
+- [termux](https://github.com/termux/termux-app): deprecated as last update was Jan 2022
+- FolderSync: replaced with Round Sync
 - X - Twitter: replace with Squawker
 - AdAway: does not work with KernelSU
-- APKUpdater
 - OnlyOffice
 - [ReVanced](https://revanced.org/#main): non-root install ReVanced and microG
 - Speedtest
@@ -103,9 +110,7 @@ Apps no longer in use/installed:
 - MX Player
 - Battery Charge Limit: input_suspend - deprecated
 - MyFitnessPal → Login
-- AccuBattery → Enable all permissions
 - Shelter → for sandboxing apps (allows having a second cloned app)
-- MarinDeck → Login
 - Super Backup:
 
   1. Backup/restore
