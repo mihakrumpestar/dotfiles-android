@@ -82,6 +82,11 @@ App freezing:
 - [SuperFreezZ](https://gitlab.com/SuperFreezZ/SuperFreezZ): discontinued
 - [BatteryTool](https://github.com/Domi04151309/BatteryTool): app gets updated, but builds are not published for 2 years already
 
+Launchers:
+
+- [lunar-launcher](https://github.com/iamrasel/lunar-launcher): gestures are too clunky, a lot of useless and distracting panels, can't set to my wallpaper
+- [Olauncher](https://github.com/tanujnotes/Olauncher): ok, but missing a lot of settings
+
 ## Optional
 
 No needing currently:
