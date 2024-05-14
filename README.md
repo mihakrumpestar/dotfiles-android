@@ -89,6 +89,9 @@ No needing currently:
 - https://github.com/nikita-yfh/android-adb-tools
 - https://apkpure.net/cssbuy/cn.onebound.cssbuy
 - https://github.com/readrops/Readrops
+- https://github.com/newhinton/disky
+- https://apkpure.com/flud-torrent-downloader/com.delphicoder.flud
+- https://github.com/anilbeesetti/nextplayer
 
 Might use in the future:
 
@@ -104,10 +107,10 @@ Apps no longer in use/installed:
 - OnlyOffice
 - [ReVanced](https://revanced.org/#main): non-root install ReVanced and microG
 - Speedtest
-- Ping Tools
+- Ping Tools: replaced with Ping Utils
 - geteduroam → Login collage Wi-Fi access
 - Davx5
-- MX Player
+- MX Player: replaced with Next Player
 - Battery Charge Limit: input_suspend - deprecated
 - MyFitnessPal → Login
 - Shelter → for sandboxing apps (allows having a second cloned app)
@@ -127,7 +130,7 @@ Apps no longer in use/installed:
 - Filmic Pro
 - Lucky Patcher
 - Moodle → Login
-- OpenVPN for Android → Load profile
+- OpenVPN for Android: now using WireGuard
 - Xplore TV → Login
 - RHVoice:
 
