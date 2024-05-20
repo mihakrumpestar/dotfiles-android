@@ -44,8 +44,9 @@ Steps:
 2. Install KernelSU modules:
 
    - [Advanced Charging Controller](https://github.com/VR-25/acc/releases)
-   - [Open Webview](https://github.com/Magisk-Modules-Alt-Repo/open_webview/releases): choose `Vanadium`
+   - [Open Webview](https://github.com/Magisk-Modules-Alt-Repo/open_webview/releases): choose `Vanadium`, activate it in Developer settings if not already
    - BCR ([Basic Call Recorder](https://github.com/chenxiaolong/BCR/releases)): set backup path and delete policy
+   - [Rucky](https://raw.githubusercontent.com/mayankmetha/Rucky/master/nightly/rucky.zip)
 
 3. Manual setup:
 
@@ -75,7 +76,14 @@ Other:
 - backup pictures and downloads
 - don’t forget to run Round Sync to copy new backups to server
 
-## Options
+## Options I am not using
+
+HID emulation:
+
+- [Android_HID_Keyboard](https://github.com/Sucareto/Android_HID_Keyboard): only live input, can't paste/inject, mouse and keyboard support, requires profile in "android-usb-gadget"
+- [android-usb-script](https://github.com/Netdex/android-usb-script): crashes if try to load any asset
+- [android-usb-gadget](https://github.com/tejado/android-usb-gadget): can only add HID devices, which some apps need
+- [android-hid-client](https://github.com/Arian04/android-hid-client): character device never initializes correctly
 
 App freezing:
 
