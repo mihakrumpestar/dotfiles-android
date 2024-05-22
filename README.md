@@ -94,6 +94,7 @@ Launchers:
 
 - [lunar-launcher](https://github.com/iamrasel/lunar-launcher): gestures are too clunky, a lot of useless and distracting panels, can't set to my wallpaper
 - [Olauncher](https://github.com/tanujnotes/Olauncher): ok, but missing a lot of settings
+- [EasyLauncher](https://github.com/DroidWorksStudio/EasyLauncher): ok, but no gestures and missing extra settings
 
 ## Optional
 
