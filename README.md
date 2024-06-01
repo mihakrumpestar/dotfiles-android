@@ -87,6 +87,7 @@ HID emulation:
 
 App freezing:
 
+- [Drowser](https://gitlab.com/juanitobananas/drowser): best
 - [SuperFreezZ](https://gitlab.com/SuperFreezZ/SuperFreezZ): discontinued
 - [BatteryTool](https://github.com/Domi04151309/BatteryTool): app gets updated, but builds are not published for 2 years already
 
@@ -106,6 +107,7 @@ No needing currently:
 - https://github.com/newhinton/disky
 - https://apkpure.com/flud-torrent-downloader/com.delphicoder.flud
 - https://github.com/anilbeesetti/nextplayer
+- https://github.com/NeoApplications/Neo-Backup
 
 Might use in the future:
 
