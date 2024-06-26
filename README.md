@@ -16,20 +16,18 @@ Steps:
 
    Reboot to recovery (with power + volume up)
 
-2. Install latest vendor (device binary drivers) (if it has them) from [here](https://xiaomifirmwareupdater.com/vendor/surya/) using recovery.
+2. Install latest firmware from [here](https://xmfirmwareupdater.com/firmware/surya/) using recovery.
 
-3. Install latest firmware from [here](https://xiaomifirmwareupdater.com/firmware/surya/) using recovery.
-
-4. Installation (in recovery):
+3. Installation (in recovery):
 
    1. First time installation:
 
-      - Wipe Dalvik, cache, system, vendor
-      - Flash latest region specific firmware (EU, CN, global, ...)
+      - Wipe Dalvik, Cache and format data. This IS NOT OPTIONAL!
+      - Reboot
       - Flash Rom
       - Flash [Gapps](https://nikgapps.com/downloads) (if required)
       - Flash KernelSU `boot.img` (if required)
-      - Format Data & reboot to system
+      - Reboot to system
 
    2. Update installation:
 
@@ -39,16 +37,24 @@ Steps:
 
 ## System setup
 
-1. Install [Obtainium](https://github.com/ImranR98/Obtainium/releases). Restore from export.
+0. Setting:
 
-2. Install KernelSU modules:
+   1. Developer options:
+      - All `*animation scale`: animation off
 
-   - [Advanced Charging Controller](https://github.com/VR-25/acc/releases)
+1. Setup folder `phone-sync` and sync from server using Round Sync. Or using USB drive.
+
+2. Install [Obtainium](https://github.com/ImranR98/Obtainium/releases). Restore from export.
+
+3. Pair KDE Connect.
+
+4. Install KernelSU modules:
+
    - [Open Webview](https://github.com/Magisk-Modules-Alt-Repo/open_webview/releases): choose `Vanadium`, activate it in Developer settings if not already
    - BCR ([Basic Call Recorder](https://github.com/chenxiaolong/BCR/releases)): set backup path and delete policy
    - [Rucky](https://raw.githubusercontent.com/mayankmetha/Rucky/master/nightly/rucky.zip)
 
-3. Manual setup:
+5. Manual setup:
 
    - Obtanium: import and export config
    - Simple Contacts and Simple Messages: restore. Set automatic backups on Contacts, Massages have manual backup only.
@@ -60,8 +66,7 @@ Steps:
         - Dark Reader
         - Flagfox
         - Grammar and Spell Checker - LanguageTool
-        - I don’t care about cookies
-        - Free VPN Proxy
+        - I still don’t care about cookies
         - uBlock Origin
 
    - OsmAnd~:
@@ -116,6 +121,7 @@ Might use in the future:
 
 Apps no longer in use/installed:
 
+- [Advanced Charging Controller](https://github.com/VR-25/acc/releases): Android 14 has "Charging control"
 - [termux](https://github.com/termux/termux-app): deprecated as last update was Jan 2022
 - FolderSync: replaced with Round Sync
 - X - Twitter: replace with Squawker
