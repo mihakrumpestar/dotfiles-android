@@ -51,7 +51,7 @@ Steps:
 4. Install KernelSU modules:
 
    - [Open Webview](https://github.com/Magisk-Modules-Alt-Repo/open_webview/releases): choose `Vanadium`, activate it in Developer settings if not already
-   - BCR ([Basic Call Recorder](https://github.com/chenxiaolong/BCR/releases)): set backup path and delete policy
+   - BCR ([Basic Call Recorder](https://github.com/chenxiaolong/BCR/releases)): enable it, set backup path and delete policy
    - [Rucky](https://raw.githubusercontent.com/mayankmetha/Rucky/master/nightly/rucky.zip)
 
 5. Manual setup:
