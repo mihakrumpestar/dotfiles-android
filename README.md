@@ -80,6 +80,7 @@ Other:
 
 - backup pictures and downloads
 - don’t forget to run Round Sync to copy new backups to server
+- [Bunny (Vandetta) plugins](https://bn-plugins.github.io/vd-web/#)
 
 ## Options I am not using
 
