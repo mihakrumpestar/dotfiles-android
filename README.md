@@ -146,7 +146,6 @@ Apps no longer in use/installed:
 - Sleep Cycle → Login
 - Splitwise
 - Slack
-- FindMyDevice
 - Brave Private Web Browser
 - APKPure
 - Cinema-FV5
@@ -161,6 +160,7 @@ Apps no longer in use/installed:
   2. Settings → Accessibility → Text-to-speach output → Preferred engine → select it again to activate
 
 - BBS (betterbatterystats)
+- Island (no longer mentained): replaced by Shelter (work profile)
 
 ## Setups
 
