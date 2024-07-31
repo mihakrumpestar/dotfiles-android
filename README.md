@@ -1,5 +1,17 @@
 # Android dotfiles
 
+## Root methods
+
+- Magisk
+- KernelSU
+- APatch
+
+## ROMs
+
+Not using:
+
+- LineageOS: 1/10 jump to an app results in blank screen, 1/10 can't go to home screen and instead only has the previous one as an image, after about a week the system UI gets sluggish and barely recognizes fingerprints. Battery life is stable.Root modules such as Rucky and OpenWebView can't be installed using Magisk at all. Generally feels slower than CrDroid.
+
 ## Prerequisites
 
 Find phone on [xdaforums](https://xdaforums.com). Make sure you unlocked the bootloader.
@@ -32,7 +44,7 @@ Steps:
    2. Update installation:
 
       - Flash ROM zip file
-      - Wipe Dalvik/cache
+      - Do NOT wipe Dalvik/cache now!
       - Reboot to system
 
 ## System setup
