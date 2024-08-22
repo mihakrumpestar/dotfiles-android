@@ -62,13 +62,15 @@ Steps:
 
 4. Install KernelSU modules:
 
-   - [Open Webview](https://github.com/Magisk-Modules-Alt-Repo/open_webview/releases): choose `Vanadium`, activate it in Developer settings if not already
-   - BCR ([Basic Call Recorder](https://github.com/chenxiaolong/BCR/releases)): enable it, set backup path and delete policy
-   - [Rucky](https://raw.githubusercontent.com/mayankmetha/Rucky/master/nightly/rucky.zip)
+   - BCR ([Basic Call Recorder](https://github.com/chenxiaolong/BCR/releases)): install app separately, enable it, set backup path and delete policy
+
+   Deprecated:
+
+      - [Open Webview](https://github.com/Magisk-Modules-Alt-Repo/open_webview/releases): choose `Vanadium`, activate it in Developer settings if not already; not working on crDroid 14 kernel
+      - [Rucky](https://raw.githubusercontent.com/mayankmetha/Rucky/master/nightly/rucky.zip): not working on crDroid 14 kernel
 
 5. Manual setup:
 
-   - Obtanium: import and export config
    - Simple Contacts and Simple Messages: restore. Set automatic backups on Contacts, Massages have manual backup only.
    - Iceraven:
 
@@ -86,7 +88,7 @@ Steps:
      1. backup and restore
      2. install all required maps (Slovenia and Croatia)
 
-Manually install `EasyPark: net.easypark.android` from `Aurora Store`.
+Manually install `EasyPark: net.easypark.android` and `Notion` from `Aurora Store` (as no source supported by Obtainium has is available).
 
 Other:
 
@@ -117,25 +119,25 @@ Launchers:
 
 ## Optional
 
-No needing currently:
+Not needing currently:
 
-- https://github.com/nikita-yfh/android-adb-tools
-- https://apkpure.net/cssbuy/cn.onebound.cssbuy
-- https://github.com/readrops/Readrops
-- https://github.com/newhinton/disky
-- https://apkpure.com/flud-torrent-downloader/com.delphicoder.flud
-- https://github.com/anilbeesetti/nextplayer
-- https://github.com/NeoApplications/Neo-Backup
+- [android-adb-tools](https://github.com/nikita-yfh/android-adb-tools)
+- [cssbuy](https://apkpure.net/cssbuy/cn.onebound.cssbuy)
+- [Readrops](https://github.com/readrops/Readrops)
+- [disky](https://github.com/newhinton/disky)
+- [flud](https://apkpure.com/flud-torrent-downloader/com.delphicoder.flud)
+- [nextplayer](https://github.com/anilbeesetti/nextplayer)
+- [Neo-Backup](https://github.com/NeoApplications/Neo-Backup)
 
 Might use in the future:
 
-- https://github.com/celzero/rethink-app: does not have option to run as root
-- https://github.com/TrackerControl/tracker-control-android: does not have option to run as root
+- [rethink-app](https://github.com/celzero/rethink-app): does not have option to run as root
+- [tracker-control-android](https://github.com/TrackerControl/tracker-control-android): does not have option to run as root
 
 Apps no longer in use/installed:
 
-- [Advanced Charging Controller](https://github.com/VR-25/acc/releases): Android 14 has "Charging control"
-- [termux](https://github.com/termux/termux-app): deprecated as last update was Jan 2022
+- [KeePassDX](https://github.com/Kunzisoft/KeePassDX): [Key Driver](https://apkpure.net/key-driver/com.kunzisoft.hardware.key) for it does not work on Android 14 (latest version only, older works)
+- [Advanced Charging Controller](https://github.com/VR-25/acc/releases): Android 14 has build in "Charging control"
 - FolderSync: replaced with Round Sync
 - X - Twitter: replace with Squawker
 - AdAway: does not work with KernelSU
@@ -143,29 +145,19 @@ Apps no longer in use/installed:
 - [ReVanced](https://revanced.org/#main): non-root install ReVanced and microG
 - Speedtest
 - Ping Tools: replaced with Ping Utils
-- geteduroam → Login collage Wi-Fi access
 - Davx5
 - MX Player: replaced with Next Player
 - Battery Charge Limit: input_suspend - deprecated
-- MyFitnessPal → Login
 - Shelter → for sandboxing apps (allows having a second cloned app)
 - Super Backup:
 
   1. Backup/restore
   2. set scheduled backup of Contacts, Messages and Call history
 
-- OpenDocument Reader
-- Sleep Cycle → Login
-- Splitwise
-- Slack
-- Brave Private Web Browser
 - APKPure
 - Cinema-FV5
 - Filmic Pro
 - Lucky Patcher
-- Moodle → Login
-- OpenVPN for Android: now using WireGuard
-- Xplore TV → Login
 - RHVoice:
 
   1. download English (United States) → SLT voice

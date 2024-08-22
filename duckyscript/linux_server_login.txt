@@ -1,6 +1,0 @@
-DELAY 1000
-STRING your_username
-ENTER
-DELAY 500
-STRING your_password
-ENTER
