@@ -16,6 +16,8 @@ Not using:
 
 Find phone on [xdaforums](https://xdaforums.com). Make sure you unlocked the bootloader.
 
+Verify phone [here](https://www.mi.com/global/verify#/en/tab/imei) (you also get the region).
+
 Steps:
 
 1. Install recovery (TWRP - at least 3.7, find latest version [https://twrp.me/](https://twrp.me/) using fastboot (with power + volume down)):
@@ -115,7 +117,6 @@ Launchers:
 
 - [lunar-launcher](https://github.com/iamrasel/lunar-launcher): gestures are too clunky, a lot of useless and distracting panels, can't set to my wallpaper
 - [Olauncher](https://github.com/tanujnotes/Olauncher): ok, but missing a lot of settings
-- [EasyLauncher](https://github.com/DroidWorksStudio/EasyLauncher): ok, but no gestures and missing extra settings
 
 ## Optional
 
@@ -136,6 +137,7 @@ Might use in the future:
 
 Apps no longer in use/installed:
 
+- [mLauncher](https://github.com/DroidWorksStudio/mLauncher): buggy/unoptimized search, replaced with EasyLauncher
 - [KeePassDX](https://github.com/Kunzisoft/KeePassDX): [Key Driver](https://apkpure.net/key-driver/com.kunzisoft.hardware.key) for it does not work on Android 14 (latest version only, older works)
 - [Advanced Charging Controller](https://github.com/VR-25/acc/releases): Android 14 has build in "Charging control"
 - FolderSync: replaced with Round Sync
