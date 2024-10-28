@@ -65,6 +65,7 @@ Steps:
 4. Install KernelSU modules:
 
    - BCR ([Basic Call Recorder](https://github.com/chenxiaolong/BCR/releases)): install app separately, enable it, set backup path and delete policy
+   - [microg_installer_revived](https://github.com/nift4/microg_installer_revived/releases): after already installed depending modules/apps using Obtainium
 
    Deprecated:
 
@@ -78,9 +79,7 @@ Steps:
 
      1. In app settings “Set as default browser”
      2. Add-ons:
-        - CanvasBlocker
         - Dark Reader
-        - Flagfox
         - Grammar and Spell Checker - LanguageTool
         - I still don’t care about cookies
         - uBlock Origin
