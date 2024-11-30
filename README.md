@@ -115,7 +115,8 @@ App freezing:
 Launchers:
 
 - [lunar-launcher](https://github.com/iamrasel/lunar-launcher): gestures are too clunky, a lot of useless and distracting panels, can't set to my wallpaper
-- [Olauncher](https://github.com/tanujnotes/Olauncher): ok, but missing a lot of settings
+- [Olauncher](https://github.com/tanujnotes/Olauncher): ok, but missing too much settings
+- [EasyLauncher](https://github.com/DroidWorksStudio/EasyLauncher): was ok, but then in v3.0.0 got somehow broken top and bottom swipe, which no longer worked even if reversed back to v2.8.0. Restore from backup also did not work in both of these versions.
 
 ## Optional
 
