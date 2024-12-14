@@ -10,7 +10,7 @@
 
 Not using:
 
-- LineageOS: 1/10 jump to an app results in blank screen, 1/10 can't go to home screen and instead only has the previous one as an image, after about a week the system UI gets sluggish and barely recognizes fingerprints. Battery life is stable.Root modules such as Rucky and OpenWebView can't be installed using Magisk at all. Generally feels slower than CrDroid.
+- LineageOS: 1/10 jump to an app results in blank screen, 1/10 can't go to home screen and instead only has the previous one as an image, after about a week the system UI gets sluggish and barely recognizes fingerprints. Battery life is stable. Root modules such as Rucky and OpenWebView can't be installed using Magisk at all. Generally feels slower than CrDroid.
 
 ## Prerequisites
 
@@ -24,8 +24,8 @@ Steps:
 
    ```sh
    fastboot devices
-   fastboot flash recovery [recovery.img]
-   fastboot boot [recovery.img]
+   fastboot flash recovery <recovery.img>
+   fastboot boot <recovery.img>
    ```
 
    Reboot to recovery (with power + volume up)
@@ -38,7 +38,7 @@ Steps:
 
       - Wipe Dalvik, Cache and format data. This IS NOT OPTIONAL!
       - Reboot
-      - Flash Rom
+      - Flash ROM
       - Flash [Gapps](https://nikgapps.com/downloads) (if required)
       - Flash KernelSU `boot.img` (if required)
       - Reboot to system
@@ -62,15 +62,16 @@ Steps:
 
 3. Pair KDE Connect.
 
-4. Install KernelSU modules:
+4. Install root modules:
 
    - BCR ([Basic Call Recorder](https://github.com/chenxiaolong/BCR/releases)): install app separately, enable it, set backup path and delete policy
-   - [microg_installer_revived](https://github.com/nift4/microg_installer_revived/releases): after already installed depending modules/apps using Obtainium
+   - [ScreenshotsEverywhere](https://github.com/vova7878-modules/ScreenshotsEverywhere/releases): screenshot anything
 
    Deprecated:
 
       - [Open Webview](https://github.com/Magisk-Modules-Alt-Repo/open_webview/releases): choose `Vanadium`, activate it in Developer settings if not already; not working on crDroid 14 kernel
       - [Rucky](https://raw.githubusercontent.com/mayankmetha/Rucky/master/nightly/rucky.zip): not working on crDroid 14 kernel
+      - [microg_installer_revived](https://github.com/nift4/microg_installer_revived/releases): after already installed depending modules/apps using Obtainium
 
 5. Manual setup:
 
@@ -89,34 +90,13 @@ Steps:
      1. backup and restore
      2. install all required maps (Slovenia and Croatia)
 
-Manually install `EasyPark: net.easypark.android` and `Notion` from `Aurora Store` (as no source supported by Obtainium has is available).
+Manually install `EasyPark: net.easypark.android` from `Aurora Store` (as no source supported by Obtainium has it available).
 
 Other:
 
 - backup pictures and downloads
 - don’t forget to run Round Sync to copy new backups to server
 - [Bunny (Vandetta) plugins](https://bn-plugins.github.io/vd-web/#)
-
-## Options I am not using
-
-HID emulation:
-
-- [Android_HID_Keyboard](https://github.com/Sucareto/Android_HID_Keyboard): only live input, can't paste/inject, mouse and keyboard support, requires profile in "android-usb-gadget"
-- [android-usb-script](https://github.com/Netdex/android-usb-script): crashes if try to load any asset
-- [android-usb-gadget](https://github.com/tejado/android-usb-gadget): can only add HID devices, which some apps need
-- [android-hid-client](https://github.com/Arian04/android-hid-client): character device never initializes correctly
-
-App freezing:
-
-- [Drowser](https://gitlab.com/juanitobananas/drowser): best
-- [SuperFreezZ](https://gitlab.com/SuperFreezZ/SuperFreezZ): discontinued
-- [BatteryTool](https://github.com/Domi04151309/BatteryTool): app gets updated, but builds are not published for 2 years already
-
-Launchers:
-
-- [lunar-launcher](https://github.com/iamrasel/lunar-launcher): gestures are too clunky, a lot of useless and distracting panels, can't set to my wallpaper
-- [Olauncher](https://github.com/tanujnotes/Olauncher): ok, but missing too much settings
-- [EasyLauncher](https://github.com/DroidWorksStudio/EasyLauncher): was ok, but then in v3.0.0 got somehow broken top and bottom swipe, which no longer worked even if reversed back to v2.8.0. Restore from backup also did not work in both of these versions.
 
 ## Optional
 
@@ -139,7 +119,7 @@ Apps no longer in use/installed:
 
 - [mLauncher](https://github.com/DroidWorksStudio/mLauncher): buggy/unoptimized search, replaced with EasyLauncher
 - [KeePassDX](https://github.com/Kunzisoft/KeePassDX): [Key Driver](https://apkpure.net/key-driver/com.kunzisoft.hardware.key) for it does not work on Android 14 (latest version only, older works)
-- [Advanced Charging Controller](https://github.com/VR-25/acc/releases): Android 14 has build in "Charging control"
+- [Advanced Charging Controller](https://github.com/VR-25/acc/releases): Android 14 has build in "Charging control" (at least my ROM)
 - FolderSync: replaced with Round Sync
 - X - Twitter: replace with Squawker
 - AdAway: does not work with KernelSU
