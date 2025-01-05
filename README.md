@@ -2,15 +2,13 @@
 
 ## Root methods
 
-- Magisk
-- KernelSU
-- APatch
+- Magisk (installs by flashing in recovery, detectable by banking apps)
+- KernelSU (has to be supported/included with ROM, undetectable)
+- APatch (flashes like Magisk, runs like KernelSU)
 
 ## ROMs
 
-Not using:
-
-- LineageOS: 1/10 jump to an app results in blank screen, 1/10 can't go to home screen and instead only has the previous one as an image, after about a week the system UI gets sluggish and barely recognizes fingerprints. Battery life is stable. Root modules such as Rucky and OpenWebView can't be installed using Magisk at all. Generally feels slower than CrDroid.
+- [crDroid](https://crdroid.net/downloads)
 
 ## Prerequisites
 
@@ -20,7 +18,19 @@ Verify phone [here](https://www.mi.com/global/verify#/en/tab/imei) (you also get
 
 Steps:
 
-1. Install recovery (TWRP - at least 3.7, find latest version [https://twrp.me/](https://twrp.me/) using fastboot (with power + volume down)):
+1. Check phone codename:
+
+   ```sh
+   fastboot getvar product
+   ```
+
+2. Check that phone is unlocked:
+
+   ```sh
+   fastboot getvar unlocked
+   ```
+
+3. Install recovery (TWRP - at least 3.7, find latest version [https://twrp.me/](https://twrp.me/) using fastboot (with power + volume down)):
 
    ```sh
    fastboot devices
@@ -30,17 +40,22 @@ Steps:
 
    Reboot to recovery (with power + volume up)
 
-2. Install latest firmware from [here](https://xmfirmwareupdater.com/firmware/surya/) using recovery.
+4. Install latest firmware from [here](https://xmfirmwareupdater.com/firmware/surya/) using recovery.
 
-3. Installation (in recovery):
+5. Installation (in recovery):
 
    1. First time installation:
 
-      - Wipe Dalvik, Cache and format data. This IS NOT OPTIONAL!
-      - Reboot
-      - Flash ROM
+      - Wipe Dalvik, Cache and Format data. This IS NOT OPTIONAL!
+      - Reboot recovery.
+      - Flash ROM:
+
+         ```sh
+         adb sideload <*.zip>
+         ```
+
       - Flash [Gapps](https://nikgapps.com/downloads) (if required)
-      - Flash KernelSU `boot.img` (if required)
+      - Flash Magisk. (rename `.apk` to `.zip`)
       - Reboot to system
 
    2. Update installation:
@@ -51,10 +66,11 @@ Steps:
 
 ## System setup
 
-0. Setting:
+0. Settings:
 
-   1. Developer options:
-      - All `*animation scale`: animation off
+   1. Accessibility:
+
+      - Disable animations: true
 
 1. Setup folder `phone-sync` and sync from server using Round Sync. Or using USB drive.
 
@@ -82,7 +98,7 @@ Steps:
      2. Add-ons:
         - Dark Reader
         - Grammar and Spell Checker - LanguageTool
-        - I still don’t care about cookies
+        - I still don't care about cookies
         - uBlock Origin
 
    - OsmAnd~:
