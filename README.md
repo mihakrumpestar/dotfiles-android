@@ -16,6 +16,15 @@ Find phone on [xdaforums](https://xdaforums.com). Make sure you unlocked the boo
 
 Verify phone [here](https://www.mi.com/global/verify#/en/tab/imei) (you also get the region).
 
+Get whole device info:
+
+```sh
+adb shell getprop
+
+# Get list of all packages
+adb shell pm list packages -3 | cut -f2 -d ':'
+```
+
 Steps:
 
 1. Check phone codename:
@@ -106,13 +115,12 @@ Steps:
      1. backup and restore
      2. install all required maps (Slovenia and Croatia)
 
-Manually install `EasyPark: net.easypark.android` from `Aurora Store` (as no source supported by Obtainium has it available).
+`EasyPark: net.easypark.android` SMS login still does not work, even after a year.
 
 Other:
 
 - backup pictures and downloads
-- don’t forget to run Round Sync to copy new backups to server
-- [Bunny (Vandetta) plugins](https://bn-plugins.github.io/vd-web/#)
+- run Round Sync to copy new backups to server
 
 ## Optional
 
@@ -133,6 +141,8 @@ Might use in the future:
 
 Apps no longer in use/installed:
 
+- [AppManager](https://github.com/MuntashirAkon/AppManager): useless without root
+- [Termux](https://github.com/termux/termux-app): just don't have any use for it
 - [mLauncher](https://github.com/DroidWorksStudio/mLauncher): buggy/unoptimized search, replaced with EasyLauncher
 - [KeePassDX](https://github.com/Kunzisoft/KeePassDX): [Key Driver](https://apkpure.net/key-driver/com.kunzisoft.hardware.key) for it does not work on Android 14 (latest version only, older works)
 - [Advanced Charging Controller](https://github.com/VR-25/acc/releases): Android 14 has build in "Charging control" (at least my ROM)
