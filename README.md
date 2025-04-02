@@ -90,13 +90,13 @@ Steps:
 4. Install root modules:
 
    - BCR ([Basic Call Recorder](https://github.com/chenxiaolong/BCR/releases)): install app separately, enable it, set backup path and delete policy
+   - [Sui](https://github.com/RikkaApps/Sui): proxy for root
    - [ScreenshotsEverywhere](https://github.com/vova7878-modules/ScreenshotsEverywhere/releases): screenshot anything
 
    Deprecated:
 
       - [Open Webview](https://github.com/Magisk-Modules-Alt-Repo/open_webview/releases): choose `Vanadium`, activate it in Developer settings if not already; not working on crDroid 14 kernel
       - [Rucky](https://raw.githubusercontent.com/mayankmetha/Rucky/master/nightly/rucky.zip): not working on crDroid 14 kernel
-      - [microg_installer_revived](https://github.com/nift4/microg_installer_revived/releases): after already installed depending modules/apps using Obtainium
 
 5. Manual setup:
 
