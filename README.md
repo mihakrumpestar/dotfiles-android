@@ -3,7 +3,7 @@
 ## Root methods
 
 - Magisk (installs by flashing in recovery, detectable by banking apps)
-- KernelSU (has to be supported/included with ROM, undetectable)
+- KernelSU Next (has to be supported/included with ROM, undetectable)
 - APatch (flashes like Magisk, runs like KernelSU)
 
 ## ROMs
@@ -89,9 +89,8 @@ Steps:
 
 4. Install root modules:
 
-   - BCR ([Basic Call Recorder](https://github.com/chenxiaolong/BCR/releases)): install app separately, enable it, set backup path and delete policy
-   - [Sui](https://github.com/RikkaApps/Sui): proxy for root
-   - [ScreenshotsEverywhere](https://github.com/vova7878-modules/ScreenshotsEverywhere/releases): screenshot anything
+   - [Basic Call Recorder](https://github.com/chenxiaolong/BCR/releases): install app separately, enable it, set backup path and delete policy
+   - [Simple-Flag-Secure](https://github.com/ShivamXD6/Simple-Flag-Secure): screenshot/record even if app has FLAG SECURE
 
    Deprecated:
 
@@ -101,12 +100,11 @@ Steps:
 5. Manual setup:
 
    - Simple Contacts and Simple Messages: restore. Set automatic backups on Contacts, Massages have manual backup only.
-   - Iceraven:
+   - IronFox:
 
      1. In app settings “Set as default browser”
      2. Add-ons:
         - Dark Reader
-        - Grammar and Spell Checker - LanguageTool
         - I still don't care about cookies
         - uBlock Origin
 
@@ -124,39 +122,13 @@ Other:
 
 ## Optional
 
-Not needing currently:
-
-- [android-adb-tools](https://github.com/nikita-yfh/android-adb-tools)
-- [cssbuy](https://apkpure.net/cssbuy/cn.onebound.cssbuy)
-- [Readrops](https://github.com/readrops/Readrops)
-- [disky](https://github.com/newhinton/disky)
-- [flud](https://apkpure.com/flud-torrent-downloader/com.delphicoder.flud)
-- [nextplayer](https://github.com/anilbeesetti/nextplayer)
-- [Neo-Backup](https://github.com/NeoApplications/Neo-Backup)
-
-Might use in the future:
-
-- [rethink-app](https://github.com/celzero/rethink-app): does not have option to run as root
-- [tracker-control-android](https://github.com/TrackerControl/tracker-control-android): does not have option to run as root
-
 Apps no longer in use/installed:
 
-- [AppManager](https://github.com/MuntashirAkon/AppManager): useless without root
 - [Termux](https://github.com/termux/termux-app): just don't have any use for it
-- [mLauncher](https://github.com/DroidWorksStudio/mLauncher): buggy/unoptimized search, replaced with EasyLauncher
+- [mLauncher](https://github.com/DroidWorksStudio/mLauncher): buggy/unoptimized search, replaced with EasyLauncher, replaced that one with Yam Launcher
 - [KeePassDX](https://github.com/Kunzisoft/KeePassDX): [Key Driver](https://apkpure.net/key-driver/com.kunzisoft.hardware.key) for it does not work on Android 14 (latest version only, older works)
-- [Advanced Charging Controller](https://github.com/VR-25/acc/releases): Android 14 has build in "Charging control" (at least my ROM)
-- FolderSync: replaced with Round Sync
-- X - Twitter: replace with Squawker
 - AdAway: does not work with KernelSU
-- OnlyOffice
-- [ReVanced](https://revanced.org/#main): non-root install ReVanced and microG
-- Speedtest
-- Ping Tools: replaced with Ping Utils
 - Davx5
-- MX Player: replaced with Next Player
-- Battery Charge Limit: input_suspend - deprecated
-- Shelter → for sandboxing apps (allows having a second cloned app)
 - Super Backup:
 
   1. Backup/restore
@@ -172,6 +144,7 @@ Apps no longer in use/installed:
   2. Settings → Accessibility → Text-to-speach output → Preferred engine → select it again to activate
 
 - BBS (betterbatterystats)
+- Shelter → for sandboxing apps (allows having a second cloned app), now already build-in
 - Island (no longer maintained): replaced by Shelter (work profile)
 
 ## Setups
@@ -244,38 +217,3 @@ Apps no longer in use/installed:
      yay -S visual-studio-code-bin
      code tunnel --accept-server-license-terms
      ```
-
-## Hacks
-
-Inject text to keyboard:
-
-```sh
-adb shell input text "insert%syour%stext%shere"
-```
-
-## Fixes
-
-NewPipe fix:
-
-```sh
-adb devices
-adb shell
-
-# pkg search zip
-
-pkg install zip tsu
-
-su
-
-mkdir -p /sdcard/temp
-
-cp /data/data/org.polymorphicshade.newpipe/databases/newpipe.db /sdcard/temp/newpipe.db
-cp /data/data/org.polymorphicshade.newpipe/databases/newpipe.settings /sdcard/temp/newpipe.settings
-
-exit
-
-cd /sdcard/temp
-sudo zip newpipe.zip newpipe.db newpipe.settings
-
-# zip them and import
-```
