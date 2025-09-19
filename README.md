@@ -63,8 +63,6 @@ Steps:
          adb sideload <*.zip>
          ```
 
-      - Flash [Gapps](https://nikgapps.com/downloads) (if required)
-      - Flash Magisk. (rename `.apk` to `.zip`)
       - Reboot to system
 
    2. Update installation:
@@ -75,27 +73,27 @@ Steps:
 
 ## System setup
 
-0. Settings:
+0. Settings
 
-   1. Accessibility:
+1. Install:
 
-      - Disable animations: true
+   - [KernelSU-Next](https://github.com/KernelSU-Next/KernelSU-Next/releases)
+   - [Shizuku](https://github.com/RikkaApps/Shizuku/releases)
+   - [Obtainium](https://github.com/ImranR98/Obtainium/releases). Restore from export.
 
-1. Setup folder `phone-sync` and sync from server using Round Sync. Or using USB drive.
-
-2. Install [Obtainium](https://github.com/ImranR98/Obtainium/releases). Restore from export.
+2. Setup sync folders.
 
 3. Pair KDE Connect.
 
 4. Install root modules:
 
+   Not working on newer Android versions (15, 16):
+
    - [Basic Call Recorder](https://github.com/chenxiaolong/BCR/releases): install app separately, enable it, set backup path and delete policy
+
+   Causing failure to boot:
+
    - [Simple-Flag-Secure](https://github.com/ShivamXD6/Simple-Flag-Secure): screenshot/record even if app has FLAG SECURE
-
-   Deprecated:
-
-      - [Open Webview](https://github.com/Magisk-Modules-Alt-Repo/open_webview/releases): choose `Vanadium`, activate it in Developer settings if not already; not working on crDroid 14 kernel
-      - [Rucky](https://raw.githubusercontent.com/mayankmetha/Rucky/master/nightly/rucky.zip): not working on crDroid 14 kernel
 
 5. Manual setup:
 
@@ -112,8 +110,6 @@ Steps:
 
      1. backup and restore
      2. install all required maps (Slovenia and Croatia)
-
-`EasyPark: net.easypark.android` SMS login still does not work, even after a year.
 
 Other:
 
