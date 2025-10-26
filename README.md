@@ -1,5 +1,7 @@
 # Android dotfiles
 
+This is for my current POCO X3 NFC, but after this one, choosing a new phone will be difficult: [bootloader-unlock-wall-of-shame](https://github.com/zenfyrdev/bootloader-unlock-wall-of-shame)
+
 ## Root methods
 
 - Magisk (installs by flashing in recovery, detectable by banking apps)
@@ -122,7 +124,7 @@ Apps no longer in use/installed:
 
 - [Termux](https://github.com/termux/termux-app): just don't have any use for it
 - [mLauncher](https://github.com/DroidWorksStudio/mLauncher): buggy/unoptimized search, replaced with EasyLauncher, replaced that one with Yam Launcher
-- [KeePassDX](https://github.com/Kunzisoft/KeePassDX): [Key Driver](https://apkpure.net/key-driver/com.kunzisoft.hardware.key) for it does not work on Android 14 (latest version only, older works)
+- [KeePassDX](https://github.com/Kunzisoft/KeePassDX) and [Key Driver](https://apkpure.net/key-driver/com.kunzisoft.hardware.key): key driver does not work properly
 - AdAway: does not work with KernelSU
 - Davx5
 - Super Backup:
