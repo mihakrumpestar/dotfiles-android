@@ -1,0 +1,59 @@
+version: "3"
+
+# Every task runs `go run`, never a built binary: Go exists only inside devenv.
+vars:
+  APP: ./cmd/androidctl
+
+tasks:
+  default:
+    desc: List tasks
+    silent: true
+    cmds:
+      - task --list
+
+  check:
+    desc: Format check, vet, tests
+    cmds:
+      - test -z "$(gofmt -l cmd internal)"
+      - go vet ./...
+      - go test ./...
+
+  report:
+    desc: Every package with the facts that decide a keep/kill call
+    cmds:
+      - go run {{.APP}} report {{.CLI_ARGS}}
+
+  health:
+    desc: Launcher, keyboard, roles, crash buffer
+    cmds:
+      - go run {{.APP}} health {{.CLI_ARGS}}
+
+  disable:
+    desc: "Disable packages from a file: task disable -- policy/packages.txt"
+    cmds:
+      - go run {{.APP}} disable {{.CLI_ARGS}}
+
+  restore:
+    desc: Re-enable everything the newest snapshot recorded as enabled
+    cmds:
+      - go run {{.APP}} restore {{.CLI_ARGS}}
+
+  obtainium:
+    desc: Install Obtainium from its GitHub release, checksum verified
+    cmds:
+      - go run {{.APP}} obtainium {{.CLI_ARGS}}
+
+  apply:
+    desc: Apply policy/profile.conf (dry run unless --yes is in CLI_ARGS)
+    cmds:
+      - go run {{.APP}} apply {{.CLI_ARGS}}
+
+  verify:
+    desc: Report drift between the device and policy/profile.conf
+    cmds:
+      - go run {{.APP}} verify {{.CLI_ARGS}}
+
+  revert:
+    desc: Restore the values captured before the last apply
+    cmds:
+      - go run {{.APP}} revert {{.CLI_ARGS}}

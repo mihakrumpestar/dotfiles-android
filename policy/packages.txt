@@ -1,0 +1,29 @@
+# Packages disabled on this device, on top of the main debloat pass.
+#
+# Applied with:
+#   task disable -- policy/packages.txt --dry-run
+#   task disable -- policy/packages.txt
+#
+# One list, not one file per concern: five entries across three files was
+# overhead with no payoff, since they are always applied together.
+#
+# Only packages that exist on this firmware are listed. An absent package is
+# reported as drift, so a stale entry should be removed rather than left to
+# fail quietly forever.
+
+# Samsung Contacts, superseded by Fossify Contacts.
+# The contacts provider is deliberately not listed: com.samsung.android.providers.contacts
+# serves the com.android.contacts authority, and every app reads it to turn a
+# number into a name, including Fossify Messages. Disabling it leaves incoming
+# SMS showing bare numbers.
+com.samsung.android.app.contacts
+
+# Samsung Gallery and My Files, superseded by Fossify Gallery and Material Files.
+# Gallery is the system ACTION_VIEW image/* handler; Fossify Gallery claims it,
+# so the intent still resolves. Camera's preview loses its gallery target.
+com.sec.android.gallery3d
+com.sec.android.app.myfiles
+
+# Diagnostics that report usage. Neither is rated Recommended upstream.
+com.sec.android.diagmonagent
+com.samsung.android.cidmanager
