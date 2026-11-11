@@ -1,0 +1,35 @@
+{
+  "package": "eu.ottop.yamlauncher",
+  "artifact": "yamlauncher.json",
+  "volatile": ["created_at"],
+  "redact": ["data.location.value", "data.locationRegion.value"],
+  "backup": [
+    {"key": {"code": "KEYCODE_HOME"}},
+    {"launch": {"component": "eu.ottop.yamlauncher/.MainActivity"}},
+    {"tap": {"selector": {"id": "eu.ottop.yamlauncher:id/textClock"}, "duration": 800}},
+    {"wait": {"selector": {"text": "Backup"}}},
+    {"tap": {"selector": {"text": "Backup"}}},
+    {"wait": {"selector": {"id": "android:id/button1"}}},
+    {"clear": {"selector": {"id": "android:id/title", "class": "android.widget.EditText"}}},
+    {"type": {"text": "{{artifact}}"}},
+    {"tap": {"selector": {"id": "android:id/button1"}}},
+    {"sleep": {"seconds": 2}},
+    {"pull": {"from": "/sdcard/Download/{{artifact}}", "to": "{{artifact}}"}}
+  ],
+  "restore": [
+    {"key": {"code": "KEYCODE_HOME"}},
+    {"launch": {"component": "eu.ottop.yamlauncher/.MainActivity"}},
+    {"tap": {"selector": {"id": "eu.ottop.yamlauncher:id/textClock"}, "duration": 800}},
+    {"wait": {"selector": {"text": "Restore"}}},
+    {"push": {"from": "{{artifact}}", "to": "/sdcard/Download/{{artifact}}"}},
+    {"tap": {"selector": {"text": "Restore"}}},
+    {"wait": {"selector": {"id": "com.google.android.documentsui:id/option_menu_search"}}},
+    {"tap": {"selector": {"id": "com.google.android.documentsui:id/option_menu_search"}}},
+    {"wait": {"selector": {"id": "com.google.android.documentsui:id/search_src_text"}}},
+    {"type": {"selector": {"id": "com.google.android.documentsui:id/search_src_text"}, "text": "{{artifact}}"}},
+    {"key": {"code": "KEYCODE_ESCAPE"}},
+    {"wait": {"selector": {"id": "android:id/title", "textContains": "{{artifact}}"}}},
+    {"tap": {"selector": {"id": "android:id/title", "textContains": "{{artifact}}"}}},
+    {"sleep": {"seconds": 3}}
+  ]
+}

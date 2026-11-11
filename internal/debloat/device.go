@@ -49,6 +49,9 @@ var ErrNoDevice = fmt.Errorf("expected exactly one device")
 type Device struct {
 	Serial string
 	ADB    string
+	// memo caches read-only output for the life of the handle, so stores that
+	// parse one dump ask the device once per run.
+	memo map[string]string
 }
 
 // NewDevice resolves a serial, or picks the only attached device when empty.
@@ -76,7 +79,11 @@ func NewDevice(serial string) (*Device, error) {
 }
 
 // Run executes one adb invocation and returns its stdout.
+//
+// It clears the read cache like Shell: `install` is the one mutation that does
+// not go through Shell, and a stale dump after an install would be wrong.
 func (d *Device) Run(args ...string) (string, error) {
+	d.memo = nil
 	full := append([]string{"-s", d.Serial}, args...)
 	out, err := exec.Command(d.ADB, full...).Output()
 	if err != nil {
@@ -94,7 +101,15 @@ func (d *Device) Run(args ...string) (string, error) {
 // The exit code is what distinguishes a refused disable (255) from a no-op (0).
 // Collapsing it into an error would throw away the device's own message, which is
 // the only useful thing to show a person.
+//
+// Every mutation goes through Shell, so running one drops the read cache: a
+// readback after a write must see the device, not the value read before it.
 func (d *Device) Shell(command string) (int, string, string) {
+	d.memo = nil
+	return d.shell(command)
+}
+
+func (d *Device) shell(command string) (int, string, string) {
 	cmd := exec.Command(d.ADB, "-s", d.Serial, "shell", command)
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
@@ -111,6 +126,24 @@ func (d *Device) Shell(command string) (int, string, string) {
 		}
 	}
 	return code, stdout.String(), stderr.String()
+}
+
+// Read runs a read-only shell command once per handle and remembers its stdout.
+// The stores parse a handful of device dumps that several entries share; asking
+// once keeps a run to one round trip per dump instead of one per entry.
+func (d *Device) Read(command string) (string, error) {
+	if out, ok := d.memo[command]; ok {
+		return out, nil
+	}
+	code, out, errOut := d.shell(command)
+	if code != 0 {
+		return "", fmt.Errorf("%s: %s", command, strings.TrimSpace(errOut))
+	}
+	if d.memo == nil {
+		d.memo = map[string]string{}
+	}
+	d.memo[command] = out
+	return out, nil
 }
 
 // Tier reduces an APK path to its partition slot, e.g. "system/priv-app".
@@ -148,6 +181,23 @@ func (d *Device) States() (map[string]string, error) {
 		}
 	}
 	return result, nil
+}
+
+// Installed returns the packages present for user 0. `pm list packages` without
+// --user covers every user, so a package installed only in a work profile would
+// pass a skip check and then fail against user 0.
+func (d *Device) Installed() (map[string]bool, error) {
+	out, err := d.Run("shell", "pm list packages --user 0")
+	if err != nil {
+		return nil, err
+	}
+	installed := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		if name, ok := strings.CutPrefix(strings.TrimSpace(line), "package:"); ok {
+			installed[name] = true
+		}
+	}
+	return installed, nil
 }
 
 // StateOf classifies one package against a States map.

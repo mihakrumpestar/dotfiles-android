@@ -77,6 +77,11 @@ func TestParse(t *testing.T) {
 			wantErr: "invalid namespace",
 		},
 		{
+			name:    "unknown section",
+			input:   "[applink]\na = \"1\"   # x\n",
+			wantErr: "unknown section",
+		},
+		{
 			name:    "invalid key",
 			input:   "[system]\na; reboot = \"1\"   # x\n",
 			wantErr: "expected key",
@@ -109,45 +114,222 @@ func TestParse(t *testing.T) {
 // The namespace alone must decide the store. Getting this wrong is the silent
 // no-op the split exists to prevent: `settings put` accepts a DeviceConfig key,
 // reports success, and writes a row nothing reads.
-func TestStoreFor(t *testing.T) {
-	tests := map[string]string{
-		"system":           "settings",
-		"secure":           "settings",
-		"global":           "settings",
-		"telephony":        "device_config",
-		"activity_manager": "device_config",
-		"unknown":          "device_config",
+func TestSectionStore(t *testing.T) {
+	tests := map[string]bool{
+		"system":             true,
+		"secure":             true,
+		"global":             true,
+		"telephony":          true,
+		"applink":            false,
+		"unknown":            false,
+		"permissions":        true,
+		"appops":             true,
+		"role":               true,
+		"deviceidle":         true,
+		"standby":            true,
+		"locale":             true,
+		"applinks":           true,
+		"applinks_domain":    true,
+		"applinks_selection": true,
 	}
 	for namespace, want := range tests {
-		if got := StoreFor(namespace).Name; got != want {
-			t.Errorf("StoreFor(%q) = %q, want %q", namespace, got, want)
+		if _, ok := SectionStore(namespace); ok != want {
+			t.Errorf("SectionStore(%q) ok = %v, want %v", namespace, ok, want)
 		}
 	}
 }
 
-func TestShippedProfileParses(t *testing.T) {
-	body, err := os.ReadFile("../../policy/profile.conf")
-	if err != nil {
-		t.Fatalf("reading policy/profile.conf: %v", err)
+// Every app-scoped section must select its own store, not the DeviceConfig
+// fallback that would happily accept a key it cannot reach.
+func TestStoreIdentity(t *testing.T) {
+	tests := map[string]Store{
+		"system":             Settings,
+		"secure":             Settings,
+		"global":             Settings,
+		"telephony":          DeviceConfig,
+		"permissions":        permissionsStore{},
+		"appops":             appOpsStore{},
+		"role":               roleStore{},
+		"deviceidle":         deviceIdleStore{},
+		"standby":            standbyStore{},
+		"locale":             localeStore{},
+		"applinks":           appLinksStore{},
+		"applinks_domain":    appLinksDomainStore{},
+		"applinks_selection": appLinksSelectionStore{},
 	}
-	p, err := Parse(string(body))
-	if err != nil {
-		t.Fatalf("policy/profile.conf: %v", err)
+	for namespace, want := range tests {
+		got, ok := SectionStore(namespace)
+		if !ok {
+			t.Errorf("SectionStore(%q) is not a known section", namespace)
+			continue
+		}
+		if got != want {
+			t.Errorf("SectionStore(%q) = %T, want %T", namespace, got, want)
+		}
+	}
+}
+
+// The key grammar must carry the separators the app-scoped stores split on.
+func TestParseAppKeys(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    string
+		wantErr string
+	}{
+		{
+			name:  "package and permission",
+			input: "[permissions]\ncom.example.app:android.permission.CAMERA = \"granted\"   # camera\n",
+			want:  "com.example.app:android.permission.CAMERA",
+		},
+		{
+			name:  "package and app op",
+			input: "[appops]\ncom.example.app:RECORD_AUDIO = \"ignore\"   # no mic\n",
+			want:  "com.example.app:RECORD_AUDIO",
+		},
+		{
+			name:  "role with dots and underscore",
+			input: "[role]\nandroid.app.role.SMS = \"com.example.sms\"   # default sms\n",
+			want:  "android.app.role.SMS",
+		},
+		{
+			name:  "package with hyphen",
+			input: "[standby]\ncom.example-app = \"rare\"   # parked\n",
+			want:  "com.example-app",
+		},
+		{
+			name:  "domain with hyphen",
+			input: "[applinks_domain]\ncom.example.app:foo-bar.example = \"approved\"   # links\n",
+			want:  "com.example.app:foo-bar.example",
+		},
+		{
+			name:  "wildcard domain",
+			input: "[applinks_selection]\ncom.example.app:*.discord.com = \"enabled\"   # links\n",
+			want:  "com.example.app:*.discord.com",
+		},
+		{
+			name:    "colon in namespace is still invalid",
+			input:   "[foo:bar]\na = \"1\"   # x\n",
+			wantErr: "invalid namespace",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := Parse(tc.input)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want containing %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			if len(p) != 1 || p[0].Key != tc.want {
+				t.Fatalf("parsed %+v, want key %q", p, tc.want)
+			}
+		})
+	}
+}
+
+// A readback is evidence only when the state says where the value came from:
+// an unset key never matches, a derived value matches when it equals what the
+// profile wants, and an app op reset to default reads back as the derived mode.
+func TestSatisfied(t *testing.T) {
+	tests := []struct {
+		name  string
+		entry Entry
+		value string
+		state State
+		want  bool
+	}{
+		{"explicit match", Entry{Namespace: "standby", Value: "rare"}, "rare", Explicit, true},
+		{"explicit mismatch", Entry{Namespace: "standby", Value: "rare"}, "never", Explicit, false},
+		{"unset never matches", Entry{Namespace: "appops", Value: "allow"}, "", Unset, false},
+		{"derived value that matches", Entry{Namespace: "standby", Value: "exempted"}, "exempted", Implicit, true},
+		{"derived value that differs", Entry{Namespace: "standby", Value: "never"}, "exempted", Implicit, false},
+		{"app op reset to default", Entry{Namespace: "appops", Value: "default"}, "allow", Implicit, true},
+		{"app op default held explicitly", Entry{Namespace: "appops", Value: "default"}, "default", Explicit, true},
+		{"domain code and token", Entry{Namespace: "applinks_domain", Value: "1"}, "verified", Explicit, true},
+		{"domain token and code", Entry{Namespace: "applinks_domain", Value: "verified"}, "1", Explicit, true},
+		{"domain mismatch", Entry{Namespace: "applinks_domain", Value: "approved"}, "denied", Explicit, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Satisfied(tc.entry, tc.value, tc.state); got != tc.want {
+				t.Errorf("Satisfied(%+v, %q, %v) = %v, want %v", tc.entry, tc.value, tc.state, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestResetOK(t *testing.T) {
+	tests := []struct {
+		name  string
+		entry Entry
+		value string
+		state State
+		want  bool
+	}{
+		{"settings delete leaves the key unset", Entry{Namespace: "secure", Key: "a"}, "", Unset, true},
+		{"deviceidle lets go of a user row", Entry{Namespace: "deviceidle", Key: "com.example.app"}, "ignore", Explicit, true},
+		{"deviceidle keeps a system-excidle row", Entry{Namespace: "deviceidle", Key: "com.example.app"}, "allow", Implicit, true},
+		{"role clears to empty", Entry{Namespace: "role", Key: "android.app.role.SMS"}, "", Explicit, true},
+		{"locale clears to empty", Entry{Namespace: "locale", Key: "com.example.app"}, "", Explicit, true},
+		{"permission revoke reads revoked", Entry{Namespace: "permissions", Key: "com.example.app:android.permission.CAMERA"}, "revoked", Explicit, true},
+		{"permission still granted", Entry{Namespace: "permissions", Key: "com.example.app:android.permission.CAMERA"}, "granted", Explicit, false},
+		{"domain back to none", Entry{Namespace: "applinks_domain", Key: "com.example.app:foo.example"}, "none", Explicit, true},
+		{"domain still approved", Entry{Namespace: "applinks_domain", Key: "com.example.app:foo.example"}, "approved", Explicit, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ResetOK(tc.entry, tc.value, tc.state); got != tc.want {
+				t.Errorf("ResetOK(%+v, %q, %v) = %v, want %v", tc.entry, tc.value, tc.state, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestShippedProfileParses(t *testing.T) {
+	// Two files, one declaration: settings in profile.conf, app scoped state in
+	// apps.conf. Splitting them must not weaken what a parse guarantees.
+	files := []string{"../../policy/profile.conf", "../../policy/apps.conf"}
+	var p Profile
+	for _, file := range files {
+		body, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("reading %s: %v", file, err)
+		}
+		parsed, err := Parse(string(body))
+		if err != nil {
+			t.Fatalf("%s: %v", file, err)
+		}
+		p = append(p, parsed...)
 	}
 	if len(p) < 30 {
-		t.Errorf("profile has only %d entries", len(p))
+		t.Errorf("profiles have only %d entries", len(p))
 	}
 
-	stores := map[string]int{}
+	stores := map[Store]int{}
+	seen := map[string]bool{}
 	for _, entry := range p {
 		if entry.Reason == "" {
 			t.Errorf("%s/%s has no reason", entry.Namespace, entry.Key)
 		}
-		stores[StoreFor(entry.Namespace).Name]++
+		if seen[Key(entry)] {
+			t.Errorf("%s is declared in both files", Key(entry))
+		}
+		seen[Key(entry)] = true
+		stores[StoreFor(entry)]++
 	}
-	// Both stores must be exercised, or the merged command is hiding one of them.
-	if stores["settings"] == 0 || stores["device_config"] == 0 {
-		t.Errorf("profile does not cover both stores: %v", stores)
+	// Every store must be exercised, or the merged command is hiding one of them.
+	if stores[Settings] == 0 || stores[DeviceConfig] == 0 {
+		t.Errorf("profiles do not cover both key/value stores: %v", stores)
+	}
+	for _, name := range []string{"permissions", "appops", "role", "deviceidle"} {
+		if stores[appStores[name]] == 0 {
+			t.Errorf("no entry exercises the %s store", name)
+		}
 	}
 }
 
@@ -174,12 +356,15 @@ func TestShippedProfileKeepsPlatformTrapsOut(t *testing.T) {
 		}
 	}
 	for _, namespace := range []string{"system", "secure", "global"} {
-		if StoreFor(namespace).Name != Settings.Name {
+		if store, ok := SectionStore(namespace); !ok || store != Settings {
 			t.Errorf("%s must route to the Settings store", namespace)
 		}
 	}
-	if StoreFor("telephony").Name == Settings.Name {
+	if store, ok := SectionStore("telephony"); !ok || store == Settings {
 		t.Error("telephony must route to DeviceConfig, not settings put")
+	}
+	if _, ok := SectionStore("applink"); ok {
+		t.Error("a typo must not be a known section")
 	}
 }
 

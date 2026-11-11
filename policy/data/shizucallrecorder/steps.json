@@ -1,0 +1,10 @@
+{
+  "package": "com.kitsumed.shizucallrecorder",
+  "backup": [
+    {"launch": {"component": "com.kitsumed.shizucallrecorder/.MainActivity"}},
+    {"sleep": {"seconds": 2}},
+    {"capture": {"name": "main"}},
+    {"scroll": {"direction": "down"}},
+    {"capture": {"name": "main-scrolled"}}
+  ]
+}

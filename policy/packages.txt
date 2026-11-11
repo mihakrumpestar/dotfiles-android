@@ -11,17 +11,17 @@
 # reported as drift, so a stale entry should be removed rather than left to
 # fail quietly forever.
 
-# Samsung Contacts, superseded by Fossify Contacts.
+# Samsung Contacts and Samsung Gallery, superseded by Fossify Contacts and Aves.
 # The contacts provider is deliberately not listed: com.samsung.android.providers.contacts
 # serves the com.android.contacts authority, and every app reads it to turn a
 # number into a name, including Fossify Messages. Disabling it leaves incoming
 # SMS showing bare numbers.
 com.samsung.android.app.contacts
 
-# Samsung Gallery and My Files, superseded by Fossify Gallery and Material Files.
-# Gallery is the system ACTION_VIEW image/* handler; Fossify Gallery claims it,
-# so the intent still resolves. Camera's preview loses its gallery target.
+# Aves claims the same image intents, so the ACTION_VIEW handler still resolves.
 com.sec.android.gallery3d
+
+# My Files, superseded by Material Files.
 com.sec.android.app.myfiles
 
 # Diagnostics that report usage. Neither is rated Recommended upstream.

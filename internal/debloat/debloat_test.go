@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -296,13 +297,28 @@ func TestNeverEmitsUninstallOrClear(t *testing.T) {
 }
 
 func TestOnlyDisableAndEnableVerbsExist(t *testing.T) {
-	allowed := map[string]bool{"disable-user": true, "enable": true}
-	all := map[string]bool{"disable-user": true, "enable": true,
-		"uninstall": true, "clear": true, "hide": true, "block": true, "suspend": true}
+	// Checked per file: a file that builds `pm` commands anywhere may not hold a
+	// banned verb at all, which also catches a verb assembled into the command
+	// later. Files like the UI recipes name steps "clear" and never touch pm, so
+	// they are correctly out of scope.
+	banned := map[string]bool{
+		"uninstall": true, "clear": true, "hide": true, "block": true, "suspend": true,
+	}
 	for _, path := range sourceFiles(t) {
-		for _, literal := range stringLiterals(t, path) {
-			if all[literal] && !allowed[literal] {
-				t.Errorf("%s references banned verb %q", path, literal)
+		literals := stringLiterals(t, path)
+		buildsPM := false
+		for _, literal := range literals {
+			if slices.Contains(strings.Fields(literal), "pm") {
+				buildsPM = true
+				break
+			}
+		}
+		if !buildsPM {
+			continue
+		}
+		for _, literal := range literals {
+			if banned[literal] {
+				t.Errorf("%s references banned verb %q but builds pm commands", path, literal)
 			}
 		}
 	}

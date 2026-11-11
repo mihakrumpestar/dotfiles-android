@@ -44,12 +44,12 @@ tasks:
       - go run {{.APP}} obtainium {{.CLI_ARGS}}
 
   apply:
-    desc: Apply policy/profile.conf (dry run unless --yes is in CLI_ARGS)
+    desc: Apply profile.conf and apps.conf (dry run unless --yes is in CLI_ARGS)
     cmds:
       - go run {{.APP}} apply {{.CLI_ARGS}}
 
   verify:
-    desc: Report drift between the device and policy/profile.conf
+    desc: Report drift between the device and both profiles
     cmds:
       - go run {{.APP}} verify {{.CLI_ARGS}}
 
@@ -57,3 +57,23 @@ tasks:
     desc: Restore the values captured before the last apply
     cmds:
       - go run {{.APP}} revert {{.CLI_ARGS}}
+
+  ui-list:
+    desc: List app backup recipes and whether an artifact is stored
+    cmds:
+      - go run {{.APP}} ui list {{.CLI_ARGS}}
+
+  ui-backup:
+    desc: "Export an app's state through its own UI: task ui-backup -- --app <package>"
+    cmds:
+      - go run {{.APP}} ui backup {{.CLI_ARGS}}
+
+  ui-restore:
+    desc: "Restore a stored artifact, guarded: task ui-restore -- --app <package> [--force]"
+    cmds:
+      - go run {{.APP}} ui restore {{.CLI_ARGS}}
+
+  ui-verify:
+    desc: "Compare a fresh export with the stored artifact: task ui-verify -- --app <package>"
+    cmds:
+      - go run {{.APP}} ui verify {{.CLI_ARGS}}

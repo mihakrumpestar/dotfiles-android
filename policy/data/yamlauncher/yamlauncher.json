@@ -1,0 +1,279 @@
+{
+    "app_id": "eu.ottop.yamlauncher",
+    "schema_version": 2,
+    "created_at": "2026-11-10T19:50:59+0100",
+    "data": {
+        "shortcut3": {
+            "value": "md.obsidian\/md.obsidian.MainActivity§splitter§0§splitter§Obsidian§splitter§false",
+            "type": "String"
+        },
+        "shortcut2": {
+            "value": "com.twitter.android\/com.twitter.android.StartActivity§splitter§0§splitter§X§splitter§false",
+            "type": "String"
+        },
+        "shortcutVAlignment": {
+            "value": "center",
+            "type": "String"
+        },
+        "lockShortcuts": {
+            "value": false,
+            "type": "Boolean"
+        },
+        "shortcut4": {
+            "value": "org.ironfoxoss.ironfox\/org.ironfoxoss.ironfox.App§splitter§0§splitter§IronFox§splitter§false",
+            "type": "String"
+        },
+        "shortcut1": {
+            "value": "com.discord\/com.discord.main.MainDefault§splitter§0§splitter§Discord§splitter§false",
+            "type": "String"
+        },
+        "shortcut0": {
+            "value": "app.morphe.android.youtube\/app.morphe.android.youtube.morphe_original_5§splitter§0§splitter§YouTube§splitter§false",
+            "type": "String"
+        },
+        "swipeThreshold": {
+            "value": "100",
+            "type": "String"
+        },
+        "dateSize": {
+            "value": "medium",
+            "type": "String"
+        },
+        "shortcutAlignment": {
+            "value": "right",
+            "type": "String"
+        },
+        "lockSettings": {
+            "value": false,
+            "type": "Boolean"
+        },
+        "tempUnits": {
+            "value": "celsius",
+            "type": "String"
+        },
+        "clockSwipe": {
+            "value": false,
+            "type": "Boolean"
+        },
+        "textShadow": {
+            "value": false,
+            "type": "Boolean"
+        },
+        "autoKeyboard": {
+            "value": false,
+            "type": "Boolean"
+        },
+        "batteryEnabled": {
+            "value": false,
+            "type": "Boolean"
+        },
+        "enableConfirmation": {
+            "value": false,
+            "type": "Boolean"
+        },
+        "doubleTapAction": {
+            "value": "lock",
+            "type": "String"
+        },
+        "shortcutNo": {
+            "value": "5",
+            "type": "String"
+        },
+        "textColor": {
+            "value": "#FFF3F3F3",
+            "type": "String"
+        },
+        "dateSwipe": {
+            "value": false,
+            "type": "Boolean"
+        },
+        "shortcutSize": {
+            "value": "small",
+            "type": "String"
+        },
+        "animationSpeed": {
+            "value": "800",
+            "type": "String"
+        },
+        "clockEnabled": {
+            "value": true,
+            "type": "Boolean"
+        },
+        "weatherEnabled": {
+            "value": true,
+            "type": "Boolean"
+        },
+        "shortcutWeight": {
+            "value": "0.06",
+            "type": "String"
+        },
+        "alphabetIndexPosition": {
+            "value": "right",
+            "type": "String"
+        },
+        "infoEnabled": {
+            "value": true,
+            "type": "Boolean"
+        },
+        "blockAutoRotation": {
+            "value": false,
+            "type": "Boolean"
+        },
+        "settingsDarkening": {
+            "value": true,
+            "type": "Boolean"
+        },
+        "textFont": {
+            "value": "system",
+            "type": "String"
+        },
+        "contactsEnabled": {
+            "value": false,
+            "type": "Boolean"
+        },
+        "alphabetIndexEnabled": {
+            "value": false,
+            "type": "Boolean"
+        },
+        "showHiddenShortcuts": {
+            "value": true,
+            "type": "Boolean"
+        },
+        "weatherUpdateInterval": {
+            "value": "15m",
+            "type": "String"
+        },
+        "closeEnabled": {
+            "value": false,
+            "type": "Boolean"
+        },
+        "leftSwipeApp": {
+            "value": "Camera§splitter§org.lineageos.aperture\/org.lineageos.aperture.CameraLauncher§splitter§0",
+            "type": "String"
+        },
+        "pinEnabled": {
+            "value": false,
+            "type": "Boolean"
+        },
+        "appMenuAlignment": {
+            "value": "right",
+            "type": "String"
+        },
+        "barVisibility": {
+            "value": false,
+            "type": "Boolean"
+        },
+        "notificationDots": {
+            "value": false,
+            "type": "Boolean"
+        },
+        "bgColor": {
+            "value": "#00000000",
+            "type": "String"
+        },
+        "appMenuSize": {
+            "value": "small",
+            "type": "String"
+        },
+        "swipeVelocity": {
+            "value": "100",
+            "type": "String"
+        },
+        "locationRegion": {
+            "value": "",
+            "type": "String"
+        },
+        "rightSwipe": {
+            "value": true,
+            "type": "Boolean"
+        },
+        "rightSwipeApp": {
+            "value": "Phone§splitter§com.android.dialer\/com.android.dialer.main.impl.MainActivity§splitter§0",
+            "type": "String"
+        },
+        "fuzzySearchEnabled": {
+            "value": true,
+            "type": "Boolean"
+        },
+        "homescreenDarkening": {
+            "value": false,
+            "type": "Boolean"
+        },
+        "leftSwipe": {
+            "value": true,
+            "type": "Boolean"
+        },
+        "doubleTap": {
+            "value": true,
+            "type": "Boolean"
+        },
+        "uninstallEnabled": {
+            "value": true,
+            "type": "Boolean"
+        },
+        "dateClick": {
+            "value": true,
+            "type": "Boolean"
+        },
+        "webSearchEnabled": {
+            "value": false,
+            "type": "Boolean"
+        },
+        "renameEnabled": {
+            "value": false,
+            "type": "Boolean"
+        },
+        "clockSize": {
+            "value": "medium",
+            "type": "String"
+        },
+        "appDrawerDarkening": {
+            "value": true,
+            "type": "Boolean"
+        },
+        "searchSize": {
+            "value": "medium",
+            "type": "String"
+        },
+        "clockClick": {
+            "value": true,
+            "type": "Boolean"
+        },
+        "searchAlignment": {
+            "value": "right",
+            "type": "String"
+        },
+        "gpsLocation": {
+            "value": true,
+            "type": "Boolean"
+        },
+        "clockAlignment": {
+            "value": "center",
+            "type": "String"
+        },
+        "appSpacing": {
+            "value": "0",
+            "type": "String"
+        },
+        "autoLaunch": {
+            "value": true,
+            "type": "Boolean"
+        },
+        "dateEnabled": {
+            "value": true,
+            "type": "Boolean"
+        },
+        "textStyle": {
+            "value": "normal",
+            "type": "String"
+        },
+        "hideEnabled": {
+            "value": false,
+            "type": "Boolean"
+        },
+        "searchEnabled": {
+            "value": true,
+            "type": "Boolean"
+        }
+    }
+}
