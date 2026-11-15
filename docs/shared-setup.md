@@ -73,14 +73,42 @@ An app's own preferences (shared preferences, databases under `/data/data/<packa
 
 ## App settings through their own UI
 
-For everything else, the reproducible path is the app's own export and import screens, driven from a recipe. Each app gets one folder named as a normalized app name (lowercase, no spaces), holding `steps.json` and the blobs that app exports:
+For everything else, the reproducible path is the app's own export and import screens, driven from a recipe. Each app gets one folder named as a normalized app name (lowercase, no spaces), and the recipe and its exports live in two separate trees:
 
 ```
-policy/data/yamlauncher/steps.json        the recipe, the only file naming the package
-policy/data/yamlauncher/yamlauncher.json  the export it produces
+policy/data/obtainium/steps.json              committed: how to drive the app, the only file naming the package
+policy/data/obtainium/obtainium.json          committed: 45 of its 48 apps, all settings
+secrets/obtainium/obtainium.private.json      private: the 3 app entries named below
+
+policy/data/yamlauncher/steps.json            committed: same recipe shape
+policy/data/yamlauncher/yamlauncher.json      committed: the export, locationRegion zeroed
+secrets/yamlauncher/yamlauncher.private.json  private: the region it was zeroed from
 ```
 
-The same recipe runs the export for both backup and restore, so the two can never drift apart. Steps name their blobs with a bare file name, which resolves inside the app's own folder, so no step ever repeats a path.
+Two trees, because a recipe is policy anyone may read while an export describes one person's phone. Everything an export holds is public unless the recipe names it, so `private` is the exception list and never the rule.
+
+The list itself is in the private tree, because naming an entry is telling the world that entry exists:
+
+```json
+"private": "private.json"
+```
+
+```json
+[
+  "settings.huaweiAppGallery-session",
+  "apps[id=com.example.bank]"
+]
+```
+
+The recipe may also carry the list inline, which is right when the selector names nothing identifying, such as a settings key. A plain path names a value: it is lifted into the overlay and the artifact keeps the zero of that type, and a path that names a list takes the whole list out. A path with an identity names one element of a list: the whole element moves into the overlay and every other element stays published, which is how one bank app can leave the file while the other forty-seven stay in its history. An identity that matches nothing fails the run, because the alternative is publishing the entry it was written to hide, and a restore fails when the overlay holds no such entry rather than dropping the app from the phone.
+
+A restore merges the overlay back in before pushing, so publishing the rest costs nothing. An overlay can be empty, which means the app's own export already had nothing worth lifting, and it is still written, because a missing overlay has to mean the private half was lost rather than that the app had no values.
+
+A recipe that declares no `private` fields keeps its whole artifact in the private tree instead, which suits an app whose every field is personal or whose export is not JSON. Either way `.gitignore` allows only `steps.json` and JSON in `policy/data/*/`, and ignores `secrets/` in full, so neither tree can leak into the other.
+
+The app's folder name is the whole mapping between the trees: rename the folder and both move. The private tree is `--secrets`, `ANDROID_SECRETS_DIR`, or `./secrets` in that order, and it is a git repository of its own with its own remote, so `git status` in this one never mentions it.
+
+The same recipe runs the export for both backup and restore, so the two can never drift apart. Steps name their blobs with a bare file name, which resolves beside the artifact, so no step ever repeats a path.
 
 Nothing is cached beside the artifact. Its hash is computed when it is needed, so a hand-edited artifact simply becomes the new baseline instead of disagreeing with a stale digest file.
 
@@ -93,16 +121,35 @@ task ui-restore -- --app eu.ottop.yamlauncher
 
 A step is one action: `launch`, `tap`, `type`, `clear`, `wait`, `key`, `scroll`, `sleep`, `pull`, `push`, `capture`, `assert`. Selectors match on `text`, `id`, `desc` or `textContains`, plus `index` for duplicates, and never on coordinates, so a layout shift in the app does not silently tap the wrong control. Every `tap`, `type` and `assert` takes a fresh `uiautomator dump` first, because the screen changes between steps and a stale view is how a recipe taps nothing.
 
-The recipe's own keys are `package`, `artifact`, `volatile`, `redact`, `backup` and `restore`. Both path lists use the same dotted form and name the leaf whose value is overwritten, e.g. `data.locationRegion.value`.
+Two flags cover the two app families that cost the most time to script:
+
+- `launch` with `"clear": true` stops the app first, so a run always starts at the root screen instead of resuming the page the last run left open.
+- `pull` with `"newest": true` treats `from` as a device glob and takes the most recently modified match, for apps that stamp a timestamp into every export name. Those files are the app's own backups, so nothing is deleted.
+
+The recipe's own keys are `package`, `artifact`, `volatile`, `redact`, `private`, `sort`, `backup` and `restore`. Every path list uses the same dotted form and names the leaf whose value is touched, e.g. `data.locationRegion.value`. A list is walked in place, so `apps.lastUpdateCheck` reaches every element, and `sort` names a list whose order carries no meaning, e.g. `apps`, so a map-ordered export still compares equal.
+
+Write a recipe by probing the screens instead of guessing at them. `ui probe` prints one line per control with the exact selector a step takes, and `--tap` walks the app inside the same command, so the chain you type is the chain you record:
+
+```sh
+task ui-probe -- --launch dev.imranr.obtainium/.MainActivity --clear \
+  --tap '{"desc": "Settings"}' --tap '{"desc": "Import/export"}'
+```
+
+A label that several controls share is printed already disambiguated, by `class` where the classes differ and by `index` where they do not, and a label whose tap lands on a containing row is printed once with the control it hits. `--all` also prints the structural nodes that carry only an id. Flutter apps (Obtainium is one) put every label in `content-desc`, which the probe reports as `desc`, so a selector written against `text` no longer happens by accident.
 
 Restore is guarded. It exports the app's current state first, compares it with the stored artifact, and stops if they match. When they differ it prints the diff, writes the current export to `.state/ui/<package>/` as the undo copy, and refuses without `--force`. The undo folder is keyed on the package id rather than the readable folder name, so renaming a folder cannot mix two apps' copies. Apps that gate their settings screen behind a lock or biometrics will block the recipe, so leave those locks off on a phone that this tooling drives.
 
-An export is a snapshot of one phone, so a committed artifact leaks whatever the app happened to hold. `redact` names the JSON paths that must not be committed, and every `pull` zeroes them before the file is stored or compared:
+An export is a snapshot of one phone, so a committed artifact leaks whatever the app happened to hold. Two path lists decide what happens to a value that must not be published:
+
+- `redact` throws it away. Every `pull` zeroes it, so nothing keeps the original and a restore resets the field to empty.
+- `private` keeps it, out of the artifact. Every `pull` lifts the value into the overlay, leaving the artifact with the zero of that type, and `push` merges the overlay back before the file is sent to the phone. A restore is therefore lossless, and a missing overlay is refused rather than silently pushing blanks.
 
 ```json
 "volatile": ["created_at"],
-"redact": ["data.location.value", "data.locationRegion.value"]
+"private": ["data.location.value", "data.locationRegion.value"]
 ```
+
+A path may appear in one list or the other, never both, and `private` needs a JSON artifact because the split is a JSON operation.
 
 The value is replaced by the zero of its own type (`""`, `false`, `0`) rather than deleted, because restore clears preferences and puts back only the keys the file names: a deleted key would disappear from the phone instead of resetting, and a type change would throw in the app's typed getter and fail the whole restore.
 
@@ -114,8 +161,9 @@ If nothing of the app's state is reachable, `docs/app-data-backup.md` lists what
 
 ## Apps no longer installed
 
-Kept for reference, so a past decision is not reopened from memory:
+Kept for reference:
 
+- AccuBattery
 - Simple-Flag-Secure: screenshots and recording with FLAG_SECURE; caused a boot failure.
 - Basic Call Recorder: stopped working on recent Android versions (v15-16). Replaced by ShizuCallRecorder.
 - VSCodroid: VS Code on Android.

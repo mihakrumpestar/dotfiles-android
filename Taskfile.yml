@@ -77,3 +77,8 @@ tasks:
     desc: "Compare a fresh export with the stored artifact: task ui-verify -- --app <package>"
     cmds:
       - go run {{.APP}} ui verify {{.CLI_ARGS}}
+
+  ui-probe:
+    desc: "Print the screen as paste-ready selectors: task ui-probe -- --tap '{\"desc\": \"Settings\"}'"
+    cmds:
+      - go run {{.APP}} ui probe {{.CLI_ARGS}}

@@ -41,7 +41,7 @@ task ui-verify -- --app <package>    # re-export and diff
 task ui-restore -- --app <package>   # replay the artifact, guarded
 ```
 
-App recipes live in `policy/data/<app>/steps.json`, with that app's exports beside them. The folder is the app's normalized name, lowercase and path friendly, e.g. `yamlauncher`.
+App recipes live in `policy/data/<app>/steps.json`, the folder being the app's normalized name, lowercase and path friendly, e.g. `yamlauncher`. The exports those recipes produce are a snapshot of one phone: the artifact commits with the values a recipe marks `private` zeroed, and only those values live in `./secrets/<app>/`, which is its own repository and ignored here.
 
 ## License
 

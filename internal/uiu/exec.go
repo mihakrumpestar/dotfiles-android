@@ -38,6 +38,14 @@ func Run(d *debloat.Device, r Recipe, steps []Step) error {
 	// must not leave one behind for a person to wonder about.
 	defer d.Shell("rm -f " + dumpPath)
 
+	// A resumed app lands on whatever page the last run left open, so the app is
+	// stopped before the first step and every run starts from its root screen.
+	d.Shell("am force-stop " + r.Package)
+	// A file picker the app opened and the run never closed would otherwise own
+	// the screen the first selector is resolved against.
+	closeForeign(d, r.Package)
+	time.Sleep(300 * time.Millisecond)
+
 	if err := run.clearExports(steps); err != nil {
 		return err
 	}
@@ -55,14 +63,17 @@ func Run(d *debloat.Device, r Recipe, steps []Step) error {
 }
 
 // exportPaths lists the device-side paths a run reads or writes: a pull's
-// source and a push's destination.
+// source and a push's destination. A newest pull is skipped: its source is the
+// app's own backup folder, which must not be deleted.
 func exportPaths(steps []Step, r Recipe) []string {
 	var paths []string
 	for _, step := range steps {
 		step.expand(r)
 		switch step.Kind {
 		case "pull":
-			paths = append(paths, step.From)
+			if !step.Newest {
+				paths = append(paths, step.From)
+			}
 		case "push":
 			paths = append(paths, step.To)
 		}
@@ -131,11 +142,7 @@ func (r *runner) step(s Step) error {
 }
 
 func (r *runner) launch(s Step) error {
-	code, out, errOut := r.device.Shell("am start -n " + s.Component)
-	if code != 0 {
-		return fmt.Errorf("am start %s: %s", s.Component, firstLine(out+errOut))
-	}
-	return nil
+	return Launch(r.device, s.Component, s.Clear)
 }
 
 func (r *runner) tap(s Step) error {
@@ -152,15 +159,16 @@ func (r *runner) tap(s Step) error {
 	}
 	target := HitTarget(nodes, node)
 	x, y := target.Bounds.Centre()
-	return r.tapAt(x, y, s.Duration)
+	return tapPoint(r.device, x, y, s.Duration)
 }
 
-func (r *runner) tapAt(x, y, duration int) error {
+// tapPoint sends a tap, or a long press when duration is non-zero, to a point.
+func tapPoint(d *debloat.Device, x, y, duration int) error {
 	command := fmt.Sprintf("input tap %d %d", x, y)
 	if duration > 0 {
 		command = fmt.Sprintf("input swipe %d %d %d %d %d", x, y, x, y, duration)
 	}
-	code, _, errOut := r.device.Shell(command)
+	code, _, errOut := d.Shell(command)
 	if code != 0 {
 		return fmt.Errorf("%s: %s", command, firstLine(errOut))
 	}
@@ -178,7 +186,7 @@ func (r *runner) typing(s Step) error {
 			return err
 		}
 		x, y := HitTarget(nodes, node).Bounds.Centre()
-		if err := r.tapAt(x, y, 0); err != nil {
+		if err := tapPoint(r.device, x, y, 0); err != nil {
 			return err
 		}
 	}
@@ -202,7 +210,7 @@ func (r *runner) clear(s Step) error {
 		return err
 	}
 	x, y := HitTarget(nodes, node).Bounds.Centre()
-	if err := r.tapAt(x, y, 0); err != nil {
+	if err := tapPoint(r.device, x, y, 0); err != nil {
 		return err
 	}
 
@@ -345,14 +353,121 @@ func (r *runner) pull(s Step) error {
 	if err := os.MkdirAll(filepath.Dir(local), 0o755); err != nil {
 		return err
 	}
-	if _, err := r.device.Run("pull", s.From, local); err != nil {
+	from := s.From
+	if s.Newest {
+		from, err = r.newest(s.From)
+		if err != nil {
+			return err
+		}
+	}
+	if _, err := r.device.Run("pull", from, local); err != nil {
 		return err
 	}
-	return redactFile(local, r.recipe.Redact)
+	if err := redactFile(local, r.recipe.Redact); err != nil {
+		return err
+	}
+	return splitFile(local, r.recipe)
+}
+
+// splitFile lifts the recipe's private values out of a pulled export. The
+// artifact keeps the public half, which is the same bytes a redacted pull
+// produces, and the overlay beside it keeps only the values that may not be
+// committed, so a restore still has them.
+func splitFile(path string, r Recipe) error {
+	if len(r.Private) == 0 {
+		return nil
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	public, private, err := splitExport(body, r.Private)
+	if err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	if err := os.WriteFile(path, public, 0o644); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(r.PrivatePath()), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(r.PrivatePath(), private, 0o600)
+}
+
+// MergeFile returns an artifact with its private overlay put back. A restore's
+// undo copy has to be this file: the artifact alone is missing whatever the
+// recipe keeps out of the repository, so undoing with it would drop those entries
+// from the phone.
+func MergeFile(r Recipe) ([]byte, error) {
+	public, err := os.ReadFile(r.ArtifactPath())
+	if err != nil {
+		return nil, err
+	}
+	if !r.IsPrivate() {
+		return public, nil
+	}
+	overlay, err := os.ReadFile(r.PrivatePath())
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w; the undo copy would be missing every private entry", r.PrivatePath(), err)
+	}
+	return mergeExport(public, overlay, r.Private)
+}
+
+// pushable is the file a push should send: the artifact with the private overlay
+// merged back in, written to the run's temporary directory so the committed
+// artifact is never the thing that carries the values. A recipe that names
+// private fields must have the overlay, because pushing the zeroed half would
+// reset the phone to blanks instead of restoring it.
+func (r *runner) pushable(local string) (string, error) {
+	if !r.recipe.IsPrivate() {
+		return local, nil
+	}
+	overlay, err := os.ReadFile(r.recipe.PrivatePath())
+	if err != nil {
+		return "", fmt.Errorf("reading %s: %w; a recipe with private fields needs it beside the artifact", r.recipe.PrivatePath(), err)
+	}
+	public, err := os.ReadFile(local)
+	if err != nil {
+		return "", err
+	}
+	merged, err := mergeExport(public, overlay, r.recipe.Private)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", r.recipe.PrivatePath(), err)
+	}
+	out := filepath.Join(r.tmp, "push-"+filepath.Base(local))
+	if err := os.WriteFile(out, merged, 0o600); err != nil {
+		return "", err
+	}
+	return out, nil
+}
+
+// newest expands a device-side glob and returns its most recently modified
+// match. An app that stamps a timestamp into every export name leaves a folder
+// of equally valid exports, and the only useful one is the newest; the others
+// are the app's own backups and are left alone.
+func (r *runner) newest(pattern string) (string, error) {
+	// The pattern reaches the device shell unquoted so it can expand, which is
+	// only safe because validation restricts it to a glob over /sdcard.
+	code, out, errOut := r.device.Shell("ls -t " + pattern + " | head -n 1")
+	if code != 0 {
+		return "", fmt.Errorf("listing %s: %s", pattern, firstLine(errOut))
+	}
+	path := strings.TrimSpace(out)
+	if path == "" {
+		return "", fmt.Errorf("no file matches %s", pattern)
+	}
+	if !strings.HasPrefix(path, "/sdcard/") {
+		return "", fmt.Errorf("%s matched %q, which is not an absolute path under /sdcard", pattern, path)
+	}
+	return path, nil
 }
 
 func (r *runner) push(s Step) error {
 	local, err := r.localPath(s.From)
+	if err != nil {
+		return err
+	}
+	local, err = r.pushable(local)
 	if err != nil {
 		return err
 	}
@@ -398,12 +513,131 @@ func (r *runner) assert(s Step) error {
 // know where something is calls this first: the screen has no stable moment, so
 // coordinates from an older tap are stale by construction.
 func (r *runner) snapshot() ([]Node, []byte, error) {
-	code, out, errOut := r.device.Shell("uiautomator dump " + dumpPath)
+	return dumpInto(r.device, filepath.Join(r.tmp, "dump.xml"))
+}
+
+// Dump reads the device's current accessibility tree into memory. It is the same
+// read every step performs, exposed so a recipe can be written against the tree
+// the app actually renders instead of a guess at one.
+func Dump(d *debloat.Device) ([]Node, error) {
+	// The dump is scratch on shared storage; a probe must not leave one behind
+	// for a person to wonder about.
+	defer d.Shell("rm -f " + dumpPath)
+	file, err := os.CreateTemp("", "uiu-dump-*.xml")
+	if err != nil {
+		return nil, err
+	}
+	path := file.Name()
+	file.Close()
+	defer os.Remove(path)
+	nodes, _, err := dumpInto(d, path)
+	return nodes, err
+}
+
+// Tap resolves one selector and taps the node a person's finger would hit. It
+// waits for the selector, because a probe chain taps a screen the previous tap
+// has only just opened and a cold app paints its tree several seconds after its
+// window takes focus.
+func Tap(d *debloat.Device, sel Selector) error {
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		nodes, err := Dump(d)
+		if err != nil {
+			return err
+		}
+		node, err := Resolve(nodes, sel)
+		if err == nil {
+			x, y := HitTarget(nodes, node).Bounds.Centre()
+			return tapPoint(d, x, y, 0)
+		}
+		if !errors.Is(err, ErrNoMatch) || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(400 * time.Millisecond)
+	}
+}
+
+// Launch starts a component, stopping the app first when clear is set, and gives
+// its window a moment to take focus. A probe chain uses it to reach the screen a
+// recipe will start from.
+func Launch(d *debloat.Device, component string, clear bool) error {
+	pkg := component[:strings.Index(component, "/")]
+	if clear {
+		d.Shell("am force-stop " + pkg)
+	}
+	closeForeign(d, pkg)
+	flag := ""
+	if clear {
+		flag = "-S "
+	}
+	code, out, errOut := d.Shell("am start " + flag + "-n " + component)
+	if code != 0 {
+		return fmt.Errorf("am start %s: %s", component, firstLine(out+errOut))
+	}
+	// Focus is one cheap dumpsys instead of a 2.5s UI dump. The wait is best
+	// effort: an app that opens another window (a file picker) still counts as
+	// launched, and the next read reports what is really there.
+	for deadline := time.Now().Add(6 * time.Second); time.Now().Before(deadline); {
+		if _, focused, _ := d.Shell("dumpsys window | grep -m1 mCurrentFocus"); strings.Contains(focused, pkg+"/") {
+			break
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	return nil
+}
+
+// Focused names the focused window's component, pkg/activity.
+func Focused(d *debloat.Device) (string, error) {
+	_, out, _ := d.Shell("dumpsys window | grep -m1 mCurrentFocus")
+	line := strings.TrimSuffix(firstLine(out), "}")
+	open := strings.LastIndex(line, "Window{")
+	if open < 0 {
+		return "", errors.New("no focused window")
+	}
+	fields := strings.Fields(line[open+len("Window{"):])
+	if len(fields) == 0 {
+		return "", errors.New("unreadable focused window")
+	}
+	return fields[len(fields)-1], nil
+}
+
+// FocusedPackage is Focused without the activity name.
+func FocusedPackage(d *debloat.Device) (string, bool) {
+	focus, err := Focused(d)
+	if err != nil {
+		return "", false
+	}
+	if index := strings.Index(focus, "/"); index >= 0 {
+		focus = focus[:index]
+	}
+	return focus, focus != ""
+}
+
+// closeForeign backs out of a window another app left on top, which is how a file
+// picker abandoned by an earlier run keeps the app being scripted from coming
+// forward. It touches nothing else: a few Back presses are what a person does,
+// and an app that ignores them loses nothing.
+func closeForeign(d *debloat.Device, pkg string) {
+	for range 3 {
+		focus, ok := FocusedPackage(d)
+		if !ok || focus == pkg {
+			return
+		}
+		if code, _, _ := d.Shell("input keyevent KEYCODE_BACK"); code != 0 {
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// dumpInto pulls the hierarchy to local and returns the parsed nodes plus the raw
+// bytes, which a capture keeps.
+func dumpInto(d *debloat.Device, local string) ([]Node, []byte, error) {
+	code, out, errOut := d.Shell("uiautomator dump " + dumpPath)
 	if code != 0 {
 		return nil, nil, fmt.Errorf("uiautomator dump: %s", firstLine(out+errOut))
 	}
-	local := filepath.Join(r.tmp, "dump.xml")
-	if _, err := r.device.Run("pull", dumpPath, local); err != nil {
+	if _, err := d.Run("pull", dumpPath, local); err != nil {
 		return nil, nil, err
 	}
 	body, err := os.ReadFile(local)
@@ -418,15 +652,15 @@ func (r *runner) snapshot() ([]Node, []byte, error) {
 }
 
 func (r *runner) localPath(path string) (string, error) {
-	// The boundary is lexical: a committed symlink inside the app folder is
+	// The boundary is lexical: a committed symlink inside the data folder is
 	// trusted, because recipes are repository policy, not untrusted input.
 	if filepath.IsAbs(path) {
-		return "", fmt.Errorf("%s is absolute; a recipe only names files in its own directory", path)
+		return "", fmt.Errorf("%s is absolute; a recipe only names files in the app's own directory", path)
 	}
-	if r.recipe.Dir == "" {
-		return "", fmt.Errorf("%s needs the recipe's directory", path)
+	if r.recipe.BlobDir == "" {
+		return "", fmt.Errorf("%s needs the app's blob directory", path)
 	}
-	return filepath.Join(r.recipe.Dir, path), nil
+	return filepath.Join(r.recipe.BlobDir, path), nil
 }
 
 func (r *runner) screenSize() (int, int, error) {

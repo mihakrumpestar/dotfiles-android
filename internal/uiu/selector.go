@@ -36,11 +36,14 @@ func (r Rect) Area() int { return (r.X2 - r.X1) * (r.Y2 - r.Y1) }
 type Node struct {
 	// Index is the node's position in document order, so a selector with an
 	// index resolves the same way every time.
-	Index   int
-	Text    string
-	ID      string
-	Desc    string
-	Class   string
+	Index int
+	Text  string
+	ID    string
+	Desc  string
+	Class string
+	// Package is the app the node belongs to, which tells a dialog owned by the
+	// system (a file picker) apart from the app being scripted.
+	Package string
 	Checked bool
 	// Checkable marks a settings row or a switch: the node that owns the state.
 	Checkable bool
@@ -56,6 +59,7 @@ type xmlNode struct {
 	ResourceID  string    `xml:"resource-id,attr"`
 	Class       string    `xml:"class,attr"`
 	ContentDesc string    `xml:"content-desc,attr"`
+	Package     string    `xml:"package,attr"`
 	Checkable   string    `xml:"checkable,attr"`
 	Checked     string    `xml:"checked,attr"`
 	Clickable   string    `xml:"clickable,attr"`
@@ -85,6 +89,7 @@ func ParseDump(body []byte) ([]Node, error) {
 				ID:        item.ResourceID,
 				Desc:      item.ContentDesc,
 				Class:     item.Class,
+				Package:   item.Package,
 				Checkable: item.Checkable == "true",
 				Checked:   item.Checked == "true",
 				Clickable: item.Clickable == "true",

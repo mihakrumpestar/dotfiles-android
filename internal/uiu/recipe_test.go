@@ -80,7 +80,7 @@ func TestParse(t *testing.T) {
 		{
 			name:    "absolute local path",
 			body:    strings.Replace(minimal, `"to": "{{artifact}}"`, `"to": "/tmp/{{artifact}}"`, 1),
-			wantErr: "must be relative to the app directory",
+			wantErr: "must be relative to the export directory",
 		},
 		{
 			name:    "local path overwrites the recipe",
@@ -111,14 +111,14 @@ func TestParse(t *testing.T) {
 			wantErr: "invalid artifact",
 		},
 		{
-			name:    "pull target escapes the app directory",
+			name:    "pull target escapes the export directory",
 			body:    strings.Replace(minimal, `"to": "{{artifact}}"`, `"to": "../elsewhere/{{artifact}}"`, 1),
-			wantErr: "leaves the app directory",
+			wantErr: "leaves the export directory",
 		},
 		{
-			name:    "push source escapes the app directory",
+			name:    "push source escapes the export directory",
 			body:    strings.Replace(minimal, `{"push": {"from": "{{artifact}}"`, `{"push": {"from": "../{{artifact}}"`, 1),
-			wantErr: "leaves the app directory",
+			wantErr: "leaves the export directory",
 		},
 		{
 			name: "placeholder expansion",
@@ -196,7 +196,7 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
-			name: "artifact path follows the recipe's own directory",
+			name: "artifact path follows the export directory",
 			body: `{
  "package": "eu.ottop.yamlauncher",
  "artifact": "yamlauncher.json",
@@ -204,15 +204,15 @@ func TestParse(t *testing.T) {
  "restore": [{"push": {"from": "yamlauncher.json", "to": "/sdcard/Download/yamlauncher.json"}}]
 }`,
 			check: func(t *testing.T, r Recipe) {
-				with := r.WithDir("policy/data/yamlauncher")
-				if got := with.ArtifactPath(); got != "policy/data/yamlauncher/yamlauncher.json" {
+				with := r.WithDataDir("secrets/yamlauncher")
+				if got := with.ArtifactPath(); got != "secrets/yamlauncher/yamlauncher.json" {
 					t.Fatalf("artifact path = %q", got)
+				}
+				if got := with.CapturePath(); got != "secrets/yamlauncher/yamlauncher.d" {
+					t.Fatalf("capture path = %q", got)
 				}
 				if got := with.CaptureFolder(); got != "yamlauncher.d" {
 					t.Fatalf("capture folder = %q", got)
-				}
-				if got := with.Name(); got != "yamlauncher" {
-					t.Fatalf("name = %q", got)
 				}
 			},
 		},
@@ -330,11 +330,16 @@ func TestParseFromDisk(t *testing.T) {
 	if recipe.Name() != "yamlauncher" {
 		t.Fatalf("name = %q, want the directory name", recipe.Name())
 	}
-	if got, want := recipe.ArtifactPath(), filepath.Join(dir, "yamlauncher.json"); got != want {
-		t.Fatalf("artifact path = %q, want %q", got, want)
+	// Parse fills the recipe tree only: the export directory comes from the
+	// loader, so a bare parse names no place to write an export.
+	if got := recipe.ArtifactPath(); got != "yamlauncher.json" {
+		t.Fatalf("artifact path = %q, want no directory before the loader runs", got)
+	}
+	if got, want := recipe.Dir, dir; got != want {
+		t.Fatalf("recipe dir = %q, want %q", got, want)
 	}
 
-	// The blobs sit beside the recipe, so the recipe must be that one file.
+	// The recipe is the one file in this tree, so a blob must not parse as one.
 	err = os.WriteFile(filepath.Join(dir, "yamlauncher.json"), []byte(minimal), 0o644)
 	if err != nil {
 		t.Fatal(err)
@@ -385,21 +390,21 @@ func TestCanonicalMasksVolatile(t *testing.T) {
 	fresh := []byte(`{"created_at":"2026-11-11T09:00:00+0100","data":{"k":{"value":1,"type":"Int"}},"app_id":"a.b"}`)
 	volatile := []string{"created_at"}
 
-	old := Canonical(stored, volatile)
-	new := Canonical(fresh, volatile)
+	old := Canonical(stored, volatile, nil)
+	new := Canonical(fresh, volatile, nil)
 	if string(old) != string(new) {
 		t.Fatalf("canonical forms differ despite only a volatile field changing:\n%s\n%s", old, new)
 	}
 
 	changed := []byte(`{"app_id":"a.b","created_at":"2026-11-11T09:00:00+0100","data":{"k":{"value":2,"type":"Int"}}}`)
-	if string(Canonical(changed, volatile)) == string(old) {
+	if string(Canonical(changed, volatile, nil)) == string(old) {
 		t.Fatal("canonical form hid a real change")
 	}
 }
 
 func TestCanonicalPassesNonJSONThrough(t *testing.T) {
 	body := []byte("not json\n")
-	if got := string(Canonical(body, nil)); got != string(body) {
+	if got := string(Canonical(body, nil, nil)); got != string(body) {
 		t.Fatalf("non-JSON body changed: %q", got)
 	}
 }
@@ -475,6 +480,93 @@ func TestRedact(t *testing.T) {
 			}
 			test.check(t, parsed.Data)
 		})
+	}
+}
+
+func TestVolatileThroughLists(t *testing.T) {
+	body := []byte(`{
+		"schemaVersion": 2,
+		"exportedAt": "2026-11-15T09:27:39",
+		"apps": [
+			{"id": "a.b", "lastUpdateCheck": 111, "apkUrls": "[[\"a.apk\",\"https://x\"]]"},
+			{"id": "c.d", "lastUpdateCheck": 222, "apkUrls": "[[\"c.apk\",\"https://y\"]]"}
+		]
+	}`)
+
+	got := Canonical(body, []string{"exportedAt", "apps.lastUpdateCheck"}, nil)
+	if strings.Contains(string(got), "111") || strings.Contains(string(got), "222") {
+		t.Fatalf("per-app lastUpdateCheck survived masking:\n%s", got)
+	}
+	if !strings.Contains(string(got), "a.apk") || !strings.Contains(string(got), "c.apk") {
+		t.Fatalf("masking dropped real content:\n%s", got)
+	}
+
+	// The same masking has to make two exports with different check times equal.
+	older := []byte(`{"schemaVersion":2,"exportedAt":"2026-11-15T09:00:00","apps":[{"id":"a.b","lastUpdateCheck":1}]}`)
+	newer := []byte(`{"schemaVersion":2,"exportedAt":"2026-11-15T10:00:00","apps":[{"id":"a.b","lastUpdateCheck":9}]}`)
+	if string(Canonical(older, []string{"exportedAt", "apps.lastUpdateCheck"}, nil)) !=
+		string(Canonical(newer, []string{"exportedAt", "apps.lastUpdateCheck"}, nil)) {
+		t.Fatal("a list-scoped volatile field still reads as drift")
+	}
+}
+
+func TestParseNewest(t *testing.T) {
+	valid := `{
+ "package": "dev.imranr.obtainium",
+ "artifact": "obtainium.json",
+ "backup": [{"pull": {"from": "/sdcard/Download/obtainium-export-*.json", "to": "{{artifact}}", "newest": true}}],
+ "restore": [{"push": {"from": "{{artifact}}", "to": "/sdcard/Download/{{artifact}}"}}]
+}`
+	recipe, err := ParseBytes([]byte(valid))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !recipe.Backup[0].Newest {
+		t.Fatal("newest lost on parse")
+	}
+
+	tests := []struct {
+		name    string
+		body    string
+		wantErr string
+	}{
+		{
+			name:    "newest on a push",
+			body:    strings.Replace(valid, `{"push": {"from": "{{artifact}}"`, `{"push": {"newest": true, "from": "{{artifact}}"`, 1),
+			wantErr: "newest is only valid on pull",
+		},
+		{
+			name:    "newest off shared storage",
+			body:    strings.Replace(valid, `/sdcard/Download/obtainium-export-*.json`, `/data/local/tmp/*.json`, 1),
+			wantErr: "needs a device path under /sdcard",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := ParseBytes([]byte(test.body))
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("error = %v, want it to contain %q", err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestSortMakesListOrderIrrelevant(t *testing.T) {
+	one := []byte(`{"apps":[{"id":"a"},{"id":"b"}],"exportedAt":"x"}`)
+	two := []byte(`{"apps":[{"id":"b"},{"id":"a"}],"exportedAt":"y"}`)
+	volatile := []string{"exportedAt"}
+
+	if string(Canonical(one, volatile, nil)) == string(Canonical(two, volatile, nil)) {
+		t.Fatal("fixture does not actually differ in order")
+	}
+	if string(Canonical(one, volatile, []string{"apps"})) != string(Canonical(two, volatile, []string{"apps"})) {
+		t.Fatal("sort did not make the permuted list compare equal")
+	}
+
+	// Sorting must not hide a real difference inside an element.
+	changed := []byte(`{"apps":[{"id":"a"},{"id":"c"}],"exportedAt":"x"}`)
+	if string(Canonical(one, volatile, []string{"apps"})) == string(Canonical(changed, volatile, []string{"apps"})) {
+		t.Fatal("sort hid a changed element")
 	}
 }
 

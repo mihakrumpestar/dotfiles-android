@@ -21,7 +21,7 @@ type CLI struct {
 	Apply     commands.ApplyCmd     `cmd:"" help:"Apply policy/profile.conf and policy/apps.conf. Dry run unless --yes."`
 	Verify    commands.VerifyCmd    `cmd:"" help:"Report drift between the device and both profiles."`
 	Revert    commands.RevertCmd    `cmd:"" help:"Restore the values captured before the last apply."`
-	UI        commands.UICmd        `cmd:"" help:"Replay a declarative UI recipe: list, backup, restore, verify."`
+	UI        commands.UICmd        `cmd:"" help:"Replay a declarative UI recipe: list, backup, restore, verify, probe."`
 }
 
 func main() {

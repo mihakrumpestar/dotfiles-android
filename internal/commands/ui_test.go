@@ -2,6 +2,7 @@ package commands
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -97,17 +98,28 @@ func TestListReportsGoodRecipesAndFailures(t *testing.T) {
 }
 
 func TestListShowsStoredAndCaptured(t *testing.T) {
+	// The recipe tree and the export tree are separate, and the listing has to
+	// read the second one: an export beside its recipe would be committed.
 	root := appTree(t, recipeApp("good", "a.b"))
-	if err := os.WriteFile(filepath.Join(root, "good", "state.json"), []byte("{}"), 0o644); err != nil {
+	secrets := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(secrets, "good"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(secrets, "good", "state.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	root2 := t.TempDir()
-	captures := filepath.Join(root2, "capturer", "captures")
-	if err := os.MkdirAll(captures, 0o755); err != nil {
+	body := `{"package": "e.f", "backup": [{"capture": {"name": "main"}}]}`
+	if err := os.MkdirAll(filepath.Join(root2, "capturer"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	body := `{"package": "e.f", "backup": [{"capture": {"name": "main"}}]}`
 	if err := os.WriteFile(filepath.Join(root2, "capturer", uiu.StepsFile), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	secrets2 := t.TempDir()
+	captures := filepath.Join(secrets2, "capturer", "captures")
+	if err := os.MkdirAll(captures, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(captures, "main.xml"), []byte("<x/>"), 0o644); err != nil {
@@ -115,22 +127,125 @@ func TestListShowsStoredAndCaptured(t *testing.T) {
 	}
 
 	for _, test := range []struct {
-		root string
-		want string
+		name    string
+		root    string
+		secrets string
+		want    string
 	}{
-		{root: root, want: "stored"},
-		{root: root2, want: "captured"},
+		{name: "stored", root: root, secrets: secrets, want: "stored"},
+		{name: "captured", root: root2, secrets: secrets2, want: "captured"},
 	} {
 		var out bytes.Buffer
 		old := stdout
 		stdout = &out
-		err := (&UIListCmd{appsFlag{Apps: test.root}}).Run(nil)
+		err := (&UIListCmd{appsFlag{Apps: test.root, Secrets: test.secrets}}).Run(nil)
 		stdout = old
 		if err != nil {
-			t.Fatalf("%s: %v", test.root, err)
+			t.Fatalf("%s: %v", test.name, err)
 		}
 		if !strings.Contains(out.String(), test.want) {
-			t.Fatalf("%s: want %q in:\n%s", test.root, test.want, out.String())
+			t.Fatalf("%s: want %q in:\n%s", test.name, test.want, out.String())
 		}
+	}
+}
+
+func TestExportRootInsideTheRecipeTreeIsRefused(t *testing.T) {
+	root := appTree(t, recipeApp("good", "a.b"))
+	_, errs := appsFlag{Apps: root, Secrets: filepath.Join(root, "good")}.all()
+	if len(errs) == 0 || !strings.Contains(errs[0].Error(), "must not sit where a commit can publish them") {
+		t.Fatalf("an export root inside the recipe tree must be refused, got %v", errs)
+	}
+}
+
+func probe(t *testing.T, nodes []uiu.Node, all bool) []string {
+	t.Helper()
+	var out bytes.Buffer
+	old := stdout
+	stdout = &out
+	defer func() { stdout = old }()
+
+	printProbe(nodes, "a.b/.Main", all)
+	var lines []string
+	for _, line := range strings.Split(out.String(), "\n") {
+		if strings.HasPrefix(line, "screen") || strings.TrimSpace(line) == "" {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+// box builds a node with the given bounds, which the probe uses for the centre it
+// taps and for spotting a container.
+func box(x1, y1, x2, y2 int) uiu.Rect { return uiu.Rect{X1: x1, Y1: y1, X2: x2, Y2: y2} }
+
+func TestProbeNamesControlsByTheirLabels(t *testing.T) {
+	nodes := []uiu.Node{
+		{Index: 0, ID: "a.b:id/root", Class: "android.widget.FrameLayout", Bounds: box(0, 0, 1080, 2340)},
+		{Index: 1, Desc: "Settings", Class: "android.widget.Button", Clickable: true, Bounds: box(900, 100, 1060, 200)},
+		{Index: 2, Text: "Exclude secrets", Class: "android.widget.TextView", Bounds: box(40, 300, 700, 400)},
+		{Index: 3, Class: "android.widget.Switch", Checkable: true, Checked: true, Bounds: box(900, 300, 1060, 400)},
+	}
+
+	lines := probe(t, nodes, false)
+	if len(lines) != 2 {
+		t.Fatalf("want 2 controls, got %d:\n%s", len(lines), strings.Join(lines, "\n"))
+	}
+	if !strings.Contains(lines[0], `{"desc": "Settings"}`) {
+		t.Fatalf("button not named by its desc: %s", lines[0])
+	}
+	// The label is a child of nothing; the switch is its sibling, so the row is
+	// one control and the tap has to land on the switch that owns the state.
+	if !strings.Contains(lines[1], `{"text": "Exclude secrets"}`) || !strings.Contains(lines[1], "switch, checked") {
+		t.Fatalf("row did not resolve to its switch: %s", lines[1])
+	}
+}
+
+func TestProbeCollapsesALabelOntoItsButton(t *testing.T) {
+	// Flutter renders a label and the button it belongs to as siblings with the
+	// same desc. One tap target, so one instruction, and no index to maintain.
+	nodes := []uiu.Node{
+		{Index: 0, Desc: "Export", Class: "android.view.View", Bounds: box(40, 100, 1000, 200)},
+		{Index: 1, Desc: "Export", Class: "android.widget.Button", Clickable: true, Bounds: box(40, 100, 1000, 200)},
+	}
+
+	lines := probe(t, nodes, false)
+	if len(lines) != 1 || !strings.Contains(lines[0], `{"desc": "Export"}`) {
+		t.Fatalf("want one instruction naming the label, got:\n%s", strings.Join(lines, "\n"))
+	}
+}
+
+func TestProbeTellsIdenticalControlsApartByIndex(t *testing.T) {
+	// Two real controls share a label and a class, so only their order separates
+	// them, and a selector must say which one it means.
+	nodes := []uiu.Node{
+		{Index: 0, Desc: "Delete", Class: "android.widget.Button", Clickable: true, Bounds: box(40, 400, 500, 500)},
+		{Index: 1, Desc: "Delete", Class: "android.widget.Button", Clickable: true, Bounds: box(560, 400, 1040, 500)},
+	}
+
+	lines := probe(t, nodes, false)
+	if len(lines) != 2 {
+		t.Fatalf("want 2 controls, got:\n%s", strings.Join(lines, "\n"))
+	}
+	for index, line := range lines {
+		if !strings.Contains(line, fmt.Sprintf(`"index": %d`, index)) {
+			t.Fatalf("row %d carries no index: %s", index, line)
+		}
+	}
+}
+
+func TestProbeHidesStructureUnlessAsked(t *testing.T) {
+	nodes := []uiu.Node{
+		{Index: 0, ID: "a.b:id/root", Class: "android.widget.FrameLayout", Bounds: box(0, 0, 1080, 2340)},
+		{Index: 1, ID: "a.b:id/icon", Class: "android.widget.ImageView", Bounds: box(40, 300, 120, 380)},
+		{Index: 2, ID: "a.b:id/query", Class: "android.widget.EditText", Bounds: box(140, 300, 900, 380)},
+	}
+
+	lines := probe(t, nodes, false)
+	if len(lines) != 1 || !strings.Contains(lines[0], "a.b:id/query") {
+		t.Fatalf("want only the input field, got:\n%s", strings.Join(lines, "\n"))
+	}
+	if all := strings.Join(probe(t, nodes, true), "\n"); !strings.Contains(all, "a.b:id/icon") {
+		t.Fatalf("--all must show the structure too, got:\n%s", all)
 	}
 }

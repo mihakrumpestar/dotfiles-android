@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -130,17 +131,40 @@ type UICmd struct {
 	Backup  UIBackupCmd  `cmd:"" help:"Run a recipe's backup steps and report the artifact's hash."`
 	Restore UIRestoreCmd `cmd:"" help:"Restore a stored artifact, guarded against overwriting unexported state."`
 	Verify  UIVerifyCmd  `cmd:"" help:"Export to a temporary file and compare it with the stored artifact."`
+	Probe   UIProbeCmd   `cmd:"" help:"Print the screen as ready-to-paste selectors, tapping as it goes."`
 }
 
-// appsFlag names the tree every ui subcommand reads.
+// appsFlag names the two trees every ui subcommand reads: the committed recipes
+// and the private exports they produce.
 type appsFlag struct {
 	Apps string `help:"Directory holding one folder per app, each with steps.json." default:"policy/data" type:"path"`
+	// Secrets is the private data root, one folder per app holding that app's
+	// exports. It is a separate repository because an export is a snapshot of one
+	// phone and the recipe beside it is policy that anyone may read.
+	Secrets string `help:"Root of the private export tree, one folder per app." default:"secrets" env:"ANDROID_SECRETS_DIR" type:"path"`
 }
 
 // recipeFlags add the undo location, which only restore writes.
 type recipeFlags struct {
 	appsFlag
 	State string `help:"Directory for undo copies." default:".state" type:"path"`
+}
+
+// dataRoot resolves the private export root and refuses one that sits inside the
+// recipe tree, where a stray `git add` would publish an export.
+func (f appsFlag) dataRoot() (string, error) {
+	root, err := filepath.Abs(f.Secrets)
+	if err != nil {
+		return "", fmt.Errorf("resolving %s: %w", f.Secrets, err)
+	}
+	apps, err := filepath.Abs(f.Apps)
+	if err != nil {
+		return "", fmt.Errorf("resolving %s: %w", f.Apps, err)
+	}
+	if rel, relErr := filepath.Rel(apps, root); relErr == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("the export root %s is inside the recipe tree %s; exports must not sit where a commit can publish them", root, apps)
+	}
+	return root, nil
 }
 
 // load finds the app's folder by package id and reads its steps.json. The id
@@ -152,6 +176,13 @@ type recipeFlags struct {
 func (f appsFlag) load(app string) (uiu.Recipe, error) {
 	if !debloat.ValidPackage(app) {
 		return uiu.Recipe{}, fmt.Errorf("not a package name: %q", app)
+	}
+	root, err := f.dataRoot()
+	if err != nil {
+		return uiu.Recipe{}, err
+	}
+	if info, statErr := os.Stat(root); statErr != nil || !info.IsDir() {
+		return uiu.Recipe{}, fmt.Errorf("export root %s is not a directory: clone the secrets repository into ./secrets, or pass --secrets", root)
 	}
 	recipes, errs := f.all()
 	if len(errs) > 0 {
@@ -181,6 +212,10 @@ func (f appsFlag) load(app string) (uiu.Recipe, error) {
 // hidden, and the rest are still returned, so listing the tree stays useful
 // while one file is being edited.
 func (f appsFlag) all() ([]uiu.Recipe, []error) {
+	root, err := f.dataRoot()
+	if err != nil {
+		return nil, []error{err}
+	}
 	paths, err := filepath.Glob(filepath.Join(f.Apps, "*", uiu.StepsFile))
 	if err != nil {
 		return nil, []error{err}
@@ -196,6 +231,19 @@ func (f appsFlag) all() ([]uiu.Recipe, []error) {
 		if err != nil {
 			errs = append(errs, err)
 			continue
+		}
+		// The export tree mirrors the recipe tree by app name, so the folder a
+		// recipe sits in is the whole mapping between them. A recipe that names
+		// private fields publishes a zeroed artifact instead, and its overlay is
+		// the only thing left in the private tree.
+		recipe.DataDir = filepath.Join(root, recipe.Name())
+		if err := recipe.LoadPrivate(); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		recipe.BlobDir = recipe.DataDir
+		if recipe.IsPrivate() {
+			recipe.BlobDir = recipe.Dir
 		}
 		recipes = append(recipes, recipe)
 	}
@@ -218,6 +266,13 @@ func (c *UIListCmd) Run(_ *Globals) error {
 			if info, err := os.Stat(recipe.ArtifactPath()); err == nil && !info.IsDir() {
 				state = "stored"
 			}
+			if recipe.IsPrivate() {
+				if _, err := os.Stat(recipe.PrivatePath()); err == nil {
+					state += " +private"
+				} else {
+					state += " no private half"
+				}
+			}
 			if hasCapture(recipe) {
 				state += " +captures"
 			}
@@ -228,10 +283,22 @@ func (c *UIListCmd) Run(_ *Globals) error {
 		}
 		fmt.Fprintf(stdout, "%-24s %-32s %-20s %s\n", recipe.Name(), recipe.Package, orArtifact(recipe.Artifact), state)
 	}
+	if root, err := c.dataRoot(); err == nil {
+		state := ""
+		if info, statErr := os.Stat(root); statErr != nil || !info.IsDir() {
+			state = " (missing)"
+		}
+		fmt.Fprintf(stdout, "secrets  %s%s\n", root, state)
+	}
 	for _, err := range errs {
 		fmt.Fprintf(stdout, "error    %v\n", err)
 	}
 	if len(errs) > 0 {
+		// With nothing parsed the first error is the whole story, and it is
+		// usually about the trees rather than a recipe.
+		if len(recipes) == 0 {
+			return errs[0]
+		}
 		return fmt.Errorf("%d recipe(s) did not parse", len(errs))
 	}
 	return nil
@@ -239,7 +306,7 @@ func (c *UIListCmd) Run(_ *Globals) error {
 
 // hasCapture reports whether the recipe's capture folder holds a screen dump.
 func hasCapture(recipe uiu.Recipe) bool {
-	entries, err := os.ReadDir(filepath.Join(recipe.Dir, recipe.CaptureFolder()))
+	entries, err := os.ReadDir(recipe.CapturePath())
 	if err != nil {
 		return false
 	}
@@ -257,6 +324,252 @@ func orArtifact(artifact string) string {
 		return "-"
 	}
 	return artifact
+}
+
+// UIProbeCmd prints the screen as the selectors a recipe would use. Writing a
+// recipe needs the tree at each step, so a probe that takes one --tap per
+// navigation step turns a manual walk of the app into a single command whose
+// arguments are the recipe's own steps.
+type UIProbeCmd struct {
+	Launch string   `help:"Activity component to start first, e.g. pkg/.MainActivity."`
+	Clear  bool     `help:"Stop the app before starting it, as a launch step with clear does."`
+	Tap    []string `help:"Selector JSON to tap before reading the screen; repeat to chain." sep:"none"`
+	All    bool     `help:"Also print structural nodes that carry only an id."`
+}
+
+// Run implements ui probe.
+func (c *UIProbeCmd) Run(global *Globals) error {
+	device, err := global.Device()
+	if err != nil {
+		return err
+	}
+	if err := (unlockable{device}).unlock(); err != nil {
+		return err
+	}
+	if c.Launch != "" {
+		if err := uiu.Launch(device, c.Launch, c.Clear); err != nil {
+			return err
+		}
+	}
+	for _, raw := range c.Tap {
+		var selector uiu.Selector
+		if err := json.Unmarshal([]byte(raw), &selector); err != nil {
+			return fmt.Errorf("--tap %s: %w", raw, err)
+		}
+		if selector.Empty() {
+			return fmt.Errorf("--tap %s names nothing to match on", raw)
+		}
+		if err := uiu.Tap(device, selector); err != nil {
+			return fmt.Errorf("--tap %s: %w", raw, err)
+		}
+		// A tap that opens a screen has to land before the next read. The dump
+		// itself waits for idle and the next tap waits for its own selector, so
+		// this only covers a transition that starts slowly.
+		time.Sleep(200 * time.Millisecond)
+	}
+	focus, _ := uiu.Focused(device)
+	nodes, err := uiu.Dump(device)
+	if err != nil {
+		return err
+	}
+	printProbe(nodes, focus, c.All)
+	return nil
+}
+
+// printProbe writes one line per control, in document order, with the smallest
+// selector that reaches it: exactly what goes into steps.json. Nodes that a tap
+// routes to the same control collapse into one line, so a settings row that
+// renders its label as three nodes is one instruction and not three. A label two
+// controls share is disambiguated by class where the classes differ and by index
+// where they do not.
+func printProbe(nodes []uiu.Node, focus string, all bool) {
+	if focus != "" {
+		fmt.Fprintf(stdout, "screen  %s\n", focus)
+	}
+	focusPackage := focus
+	if index := strings.Index(focusPackage, "/"); index >= 0 {
+		focusPackage = focusPackage[:index]
+	}
+
+	var labeled []uiu.Node
+	for _, node := range nodes {
+		field, label := probeLabel(node)
+		if label == "" {
+			continue
+		}
+		// A node that is neither tappable nor labelled by what it says is
+		// structure: a row's icon, a screen's layout container. It is clutter
+		// until someone asks for the whole tree, and an input field is the
+		// exception a recipe types into.
+		if !all && !node.Clickable && !node.Checkable && field == "id" && !strings.Contains(node.Class, "EditText") {
+			continue
+		}
+		labeled = append(labeled, node)
+	}
+
+	// One row per control: when several labeled nodes route a tap to the same
+	// node, the most specific one names it.
+	chosen := map[int]int{}
+	var order []int
+	for at, node := range labeled {
+		target := uiu.HitTarget(nodes, node)
+		previous, seen := chosen[target.Index]
+		if !seen {
+			chosen[target.Index] = at
+			order = append(order, target.Index)
+			continue
+		}
+		if probePrefer(labeled[at], labeled[previous], target) {
+			chosen[target.Index] = at
+		}
+	}
+
+	type key struct{ field, label string }
+	type row struct {
+		node     uiu.Node
+		target   uiu.Node
+		selector string
+		notes    string
+	}
+	rows := make([]row, 0, len(order))
+	groups := map[key][]int{}
+	for _, targetIndex := range order {
+		node := labeled[chosen[targetIndex]]
+		target := uiu.HitTarget(nodes, node)
+		field, label := probeLabel(node)
+		notes := []string{probeKind(target)}
+		if node.Package != "" && node.Package != focusPackage {
+			notes = append(notes, "in "+node.Package)
+		}
+		if target.Checkable && target.Checked {
+			notes = append(notes, "checked")
+		}
+		k := key{field, label}
+		groups[k] = append(groups[k], len(rows))
+		rows = append(rows, row{node: node, target: target, notes: strings.Join(notes, ", ")})
+	}
+
+	width := 0
+	for at := range rows {
+		node := rows[at].node
+		field, label := probeLabel(node)
+		selector := map[string]any{field: label}
+		notes := rows[at].notes
+		if group := groups[key{field, label}]; len(group) > 1 {
+			classes := map[string]bool{}
+			for _, position := range group {
+				classes[rows[position].node.Class] = true
+			}
+			if len(classes) == len(group) {
+				selector["class"] = node.Class
+				notes += ", label shared, class tells them apart"
+			} else {
+				selector["index"] = probeRank(nodes, field, label, node.Index)
+				notes += fmt.Sprintf(", %d controls share its label and class", len(group))
+			}
+		}
+		rows[at].selector = probeJSON(selector)
+		rows[at].notes = notes
+		if len(rows[at].selector) > width {
+			width = len(rows[at].selector)
+		}
+	}
+	for at, r := range rows {
+		fmt.Fprintf(stdout, "%3d  %-*s  %s\n", at+1, width, r.selector, r.notes)
+	}
+
+	unlabelled := 0
+	for _, node := range nodes {
+		if _, label := probeLabel(node); label == "" && node.Clickable {
+			unlabelled++
+		}
+	}
+	if unlabelled > 0 {
+		fmt.Fprintf(stdout, "%d clickable node(s) carry no label, so no selector can reach them\n", unlabelled)
+	}
+}
+
+// probePrefer reports whether a names a control better than b. A selector a
+// person reads beats an id, and a node that is the target itself beats one whose
+// tap lands somewhere else, because the visible label survives a list whose
+// order changes while an id keeps its rank only by accident.
+func probePrefer(a, b uiu.Node, target uiu.Node) bool {
+	score := func(node uiu.Node) int {
+		points := 0
+		if field, _ := probeLabel(node); field == "id" {
+			points += 2
+		}
+		if node.Bounds != target.Bounds {
+			points++
+		}
+		return points
+	}
+	return score(a) < score(b)
+}
+
+// probeRank is a node's position among the nodes its label matches, which is the
+// index a selector has to spell when class cannot tell two controls apart.
+func probeRank(nodes []uiu.Node, field, label string, at int) int {
+	rank := 0
+	for _, node := range nodes {
+		if node.Index >= at {
+			break
+		}
+		if matched, value := probeLabel(node); matched == field && value == label {
+			rank++
+		}
+	}
+	return rank
+}
+
+// probeLabel names the field a selector should use for a node, preferring the
+// label a person sees, then the text, then the id a developer gave it.
+func probeLabel(node uiu.Node) (field, label string) {
+	switch {
+	case node.Desc != "":
+		return "desc", node.Desc
+	case node.Text != "":
+		return "text", node.Text
+	case node.ID != "":
+		return "id", node.ID
+	}
+	return "", ""
+}
+
+// probeKind shortens a class to what the node is.
+func probeKind(node uiu.Node) string {
+	kind := node.Class
+	if index := strings.LastIndex(kind, "."); index >= 0 {
+		kind = kind[index+1:]
+	}
+	if kind == "" {
+		return "node"
+	}
+	return strings.ToLower(kind)
+}
+
+// probeJSON renders a selector the way steps.json spells it, without the HTML
+// escaping that would turn a `&` into an escape nobody wants to read.
+func probeJSON(selector map[string]any) string {
+	keys := make([]string, 0, len(selector))
+	for k := range selector {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	var body strings.Builder
+	body.WriteString("{")
+	for i, k := range keys {
+		if i > 0 {
+			body.WriteString(", ")
+		}
+		value, err := json.Marshal(selector[k])
+		if err != nil {
+			continue
+		}
+		fmt.Fprintf(&body, "%q: %s", k, value)
+	}
+	body.WriteString("}")
+	return body.String()
 }
 
 // UIBackupCmd exports the device's current state.
@@ -285,7 +598,7 @@ func (c *UIBackupCmd) Run(global *Globals) error {
 		if err := uiu.Run(device, recipe, recipe.Backup); err != nil {
 			return err
 		}
-		fmt.Fprintf(stdout, "captured %s\n", filepath.Join(recipe.Dir, recipe.CaptureFolder()))
+		fmt.Fprintf(stdout, "captured %s\n", recipe.CapturePath())
 		return nil
 	}
 
@@ -342,7 +655,7 @@ func (c *UIVerifyCmd) Run(global *Globals) error {
 	if err != nil {
 		return err
 	}
-	got, path, cleanup, err := exportTemp(device, recipe)
+	got, path, _, cleanup, err := exportTemp(device, recipe)
 	if err != nil {
 		return err
 	}
@@ -389,7 +702,7 @@ func (c *UIRestoreCmd) Run(global *Globals) error {
 	if _, err := os.Stat(stored); err != nil {
 		return fmt.Errorf("stored artifact: %w", err)
 	}
-	got, path, cleanup, err := exportTemp(device, recipe)
+	got, path, temp, cleanup, err := exportTemp(device, recipe)
 	if err != nil {
 		return err
 	}
@@ -407,7 +720,13 @@ func (c *UIRestoreCmd) Run(global *Globals) error {
 	// can be renamed or reused, and a restore copy has to stay attributable.
 	undo := filepath.Join(c.State, "ui", recipe.Package,
 		time.Now().UTC().Format("20060102T150405Z")+"-pre-restore"+filepath.Ext(stored))
-	if err := copyFile(path, undo); err != nil {
+	// The undo copy is the whole export, private entries included: copying the
+	// split artifact would leave a file that cannot put them back.
+	body, err := uiu.MergeFile(temp)
+	if err != nil {
+		return err
+	}
+	if err := writeFile(undo, body); err != nil {
 		return err
 	}
 	fmt.Fprintf(stdout, "undo copy: %s\n", undo)
@@ -428,25 +747,25 @@ func (c *UIRestoreCmd) Run(global *Globals) error {
 // The name keeps the original extension so the app's own file filter still
 // shows it, and the directory is empty so nothing from the app's stored folder
 // can be mistaken for this run's output.
-func exportTemp(d *debloat.Device, recipe uiu.Recipe) (digest, path string, cleanup func(), err error) {
+func exportTemp(d *debloat.Device, recipe uiu.Recipe) (digest, path string, temp uiu.Recipe, cleanup func(), err error) {
 	dir, err := os.MkdirTemp("", "uiu-verify-")
 	if err != nil {
-		return "", "", nil, err
+		return "", "", uiu.Recipe{}, nil, err
 	}
 	cleanup = func() { os.RemoveAll(dir) }
 
-	temp := recipe.WithDir(dir).WithArtifact(tempArtifact(recipe.Artifact))
+	temp = recipe.WithDataDir(dir).WithArtifact(tempArtifact(recipe.Artifact))
 	if err := uiu.Run(d, temp, temp.Backup); err != nil {
 		cleanup()
-		return "", "", nil, err
+		return "", "", uiu.Recipe{}, nil, err
 	}
 	path = temp.ArtifactPath()
 	digest, err = hashFile(temp, path)
 	if err != nil {
 		cleanup()
-		return "", "", nil, err
+		return "", "", uiu.Recipe{}, nil, err
 	}
-	return digest, path, cleanup, nil
+	return digest, path, temp, cleanup, nil
 }
 
 // tempArtifact keeps the extension and adds a marked stem, e.g.
@@ -476,7 +795,7 @@ func hashFile(recipe uiu.Recipe, path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	sum := sha256.Sum256(uiu.Canonical(body, recipe.Volatile))
+	sum := sha256.Sum256(uiu.Canonical(body, recipe.Volatile, recipe.Sort))
 	return hex.EncodeToString(sum[:]), nil
 }
 
@@ -496,8 +815,8 @@ func diffArtifacts(recipe uiu.Recipe, fresh string) string {
 	if !isText(stored) || !isText(body) {
 		return ""
 	}
-	old := uiu.Canonical(stored, recipe.Volatile)
-	new := uiu.Canonical(body, recipe.Volatile)
+	old := uiu.Canonical(stored, recipe.Volatile, recipe.Sort)
+	new := uiu.Canonical(body, recipe.Volatile, recipe.Sort)
 	return uiu.UnifiedDiff(recipe.Artifact, old, new)
 }
 
@@ -508,17 +827,15 @@ func isText(body []byte) bool {
 	return utf8.Valid(body) && !bytes.ContainsRune(body, 0)
 }
 
-// copyFile writes a new undo copy and refuses to replace an existing one: an
+// writeFile writes a new undo copy and refuses to replace an existing one: an
 // undo copy is the only record of what the device held before a forced restore.
-func copyFile(from, to string) error {
-	body, err := os.ReadFile(from)
-	if err != nil {
-		return err
-	}
+// It is created unreadable to anyone else, because it is a full export of one
+// phone and can hold what the recipe keeps private.
+func writeFile(to string, body []byte) error {
 	if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
 		return err
 	}
-	file, err := os.OpenFile(to, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	file, err := os.OpenFile(to, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return fmt.Errorf("writing %s: %w", to, err)
 	}
