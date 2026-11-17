@@ -1,8 +1,10 @@
 version: "3"
 
-# Every task runs `go run`, never a built binary: Go exists only inside devenv.
+# Tasks run from source through devenv, never a built binary. ANDROIDCTL is the
+# device command; UIU is the app-backup recipe engine.
 vars:
-  APP: ./cmd/androidctl
+  ANDROIDCTL: uv run androidctl
+  UIU: uv run uiu
 
 tasks:
   default:
@@ -12,73 +14,78 @@ tasks:
       - task --list
 
   check:
-    desc: Format check, vet, tests
+    desc: Format check and tests
     cmds:
-      - test -z "$(gofmt -l cmd internal)"
-      - go vet ./...
-      - go test ./...
+      - uv run ruff check .
+      - uv run ruff format --check .
+      - uv run pytest -q
 
   report:
     desc: Every package with the facts that decide a keep/kill call
     cmds:
-      - go run {{.APP}} report {{.CLI_ARGS}}
+      - "{{.ANDROIDCTL}} report {{.CLI_ARGS}}"
 
   health:
     desc: Launcher, keyboard, roles, crash buffer
     cmds:
-      - go run {{.APP}} health {{.CLI_ARGS}}
+      - "{{.ANDROIDCTL}} health {{.CLI_ARGS}}"
 
   disable:
     desc: "Disable packages from a file: task disable -- policy/packages.txt"
     cmds:
-      - go run {{.APP}} disable {{.CLI_ARGS}}
+      - "{{.ANDROIDCTL}} disable {{.CLI_ARGS}}"
 
   restore:
     desc: Re-enable everything the newest snapshot recorded as enabled
     cmds:
-      - go run {{.APP}} restore {{.CLI_ARGS}}
+      - "{{.ANDROIDCTL}} restore {{.CLI_ARGS}}"
 
-  obtainium:
-    desc: Install Obtainium from its GitHub release, checksum verified
+  init:
+    desc: "Install the bootstrap apps and start their services: Shizuku-Next, Obtainium"
     cmds:
-      - go run {{.APP}} obtainium {{.CLI_ARGS}}
+      - "{{.ANDROIDCTL}} init {{.CLI_ARGS}}"
+
+  install:
+    desc: "Install an app from its release, checksum verified: task install -- <package>"
+    cmds:
+      - "{{.ANDROIDCTL}} install {{.CLI_ARGS}}"
 
   apply:
     desc: Apply profile.conf and apps.conf (dry run unless --yes is in CLI_ARGS)
     cmds:
-      - go run {{.APP}} apply {{.CLI_ARGS}}
+      - "{{.ANDROIDCTL}} apply {{.CLI_ARGS}}"
 
   verify:
     desc: Report drift between the device and both profiles
     cmds:
-      - go run {{.APP}} verify {{.CLI_ARGS}}
+      - "{{.ANDROIDCTL}} verify {{.CLI_ARGS}}"
 
   revert:
     desc: Restore the values captured before the last apply
     cmds:
-      - go run {{.APP}} revert {{.CLI_ARGS}}
+      - "{{.ANDROIDCTL}} revert {{.CLI_ARGS}}"
 
   ui-list:
     desc: List app backup recipes and whether an artifact is stored
     cmds:
-      - go run {{.APP}} ui list {{.CLI_ARGS}}
+      - "{{.UIU}} list {{.CLI_ARGS}}"
 
   ui-backup:
     desc: "Export an app's state through its own UI: task ui-backup -- --app <package>"
     cmds:
-      - go run {{.APP}} ui backup {{.CLI_ARGS}}
+      - "{{.UIU}} backup {{.CLI_ARGS}}"
 
   ui-restore:
     desc: "Restore a stored artifact, guarded: task ui-restore -- --app <package> [--force]"
     cmds:
-      - go run {{.APP}} ui restore {{.CLI_ARGS}}
+      - "{{.UIU}} restore {{.CLI_ARGS}}"
 
   ui-verify:
     desc: "Compare a fresh export with the stored artifact: task ui-verify -- --app <package>"
     cmds:
-      - go run {{.APP}} ui verify {{.CLI_ARGS}}
+      - "{{.UIU}} verify {{.CLI_ARGS}}"
 
   ui-probe:
-    desc: "Print the screen as paste-ready selectors: task ui-probe -- --tap '{\"desc\": \"Settings\"}'"
+    desc: "Print the screen as paste-ready selectors: task ui-probe -- --tap '{\"desc\": \"Settings\"}' or --step <recipe step>"
     cmds:
-      - go run {{.APP}} ui probe {{.CLI_ARGS}}
+      - "{{.UIU}} probe {{.CLI_ARGS}}"

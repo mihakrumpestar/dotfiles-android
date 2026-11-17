@@ -3,15 +3,17 @@
   ...
 }:
 {
-  # adb and fastboot for talking to the device; go for the tooling.
+  # adb (the Android Debug Bridge, the link to the phone) and fastboot come from
+  # android-tools, the task runner is go-task, and uv runs the Python tools.
   packages = with pkgs; [
     android-tools
     go-task
+    uv
   ];
 
-  languages.go.enable = true;
+  languages.python.enable = true;
 
   enterTest = ''
-    go test ./...
+    uv run pytest -q
   '';
 }

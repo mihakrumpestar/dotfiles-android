@@ -1,0 +1,3 @@
+# Bootstrap order: the privileged backend first, then the installer that uses it.
+moe.shizuku.privileged.api
+dev.imranr.obtainium

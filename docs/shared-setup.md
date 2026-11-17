@@ -1,48 +1,57 @@
 # Shared setup
 
-Apps, accounts and settings both phones use. Debloat the stock phone first, see [Debloat](debloat.md); the custom ROM phone starts with far less preinstalled software.
+Apps, accounts and settings that both phones use. Debloat the stock phone first, see [Debloat](debloat.md).
 
 ## Apps
 
-Use Obtainium as the only app store. Its export is the app list: set it up once, export, re-import on the next phone. No second copy lives in this repository.
+Use Obtainium as the only app store. Its export is the app list: set it up once, export it, and import it on the next phone. No second copy lives in this repository.
+
+On a fresh phone, enable USB debugging, attach the cable, and run:
 
 ```sh
-task obtainium            # latest release, checksum verified, installed
-task obtainium -- --dry-run
+task init
 ```
 
-The installer picks the asset matching the device's `ro.product.cpu.abilist`, checks the publisher's `.sha256`, and refuses to install on a mismatch. Import your export from Obtainium's Settings.
+`task init` reads `policy/init.txt` in order and installs Shizuku-Next, then Obtainium. It verifies each APK, then starts Shizuku's server over USB so the server holds adb permissions and Obtainium can install every app through it. Keep the cable attached until it prints `started`.
+
+For one app:
+
+```sh
+task install -- dev.imranr.obtainium
+task install -- dev.imranr.obtainium --dry-run
+```
+
+An app is one directory under `policy/data`. Its `install.json` holds the package id and release facts: the release URL must be a `.../releases/latest` endpoint, `assets` maps an ABI to a release file with a `universal` fallback, `checksum` says where the digest comes from (`asset` for a publisher's `.sha256`, `digest` for the digest GitHub records), and `start` is optional. `steps.py` is optional and drives backup and restore. Adding an app is adding a directory; no shared code changes.
+
+After Obtainium starts, open it and import your export from Settings.
 
 ## Round Sync
 
-Use the maintained [gulp79 fork](https://github.com/gulp79/Round-Sync) (`de.felixnuesse.extract`), not the unmaintained upstream `newhinton/Round-Sync`. Grant storage permission before the first run; without `READ_EXTERNAL_STORAGE` it cannot see local storage.
+Use the maintained [gulp79 fork](https://github.com/gulp79/Round-Sync) (`de.felixnuesse.extract`), not the unmaintained `newhinton/Round-Sync`. Grant storage permission before the first run; without `READ_EXTERNAL_STORAGE` it cannot see local storage.
 
 ## Accounts and pairing
 
 1. Pair KDE Connect.
-2. Restore Simple Contacts and Simple Messages. Set automatic backups on Contacts; Messages has manual backup only.
-3. IronFox: set as default browser, then add Dark Reader, I still don't care about cookies, and uBlock Origin.
+2. Restore Simple Contacts and Simple Messages. Turn on automatic backups for Contacts. Messages only has manual backup.
+3. IronFox: set it as the default browser, then add Dark Reader, I still don't care about cookies, and uBlock Origin.
 4. OsmAnd~: restore the backup and install the required maps.
-5. ShizuCallRecorder, with Shizuku from [Shizuku-Next](https://github.com/rushiranpise/Shizuku-Next) (`moe.shizuku.privileged.api`) and [ShizuCallRecorder](https://github.com/Kitsumed/ShizuCallRecorder) (`com.kitsumed.shizucallrecorder`). Setup, once:
+5. Shizuku-Next and ShizuCallRecorder:
+   - Run `task init` as above.
+   - Grant Shizuku the auto-start permission, enable Start on boot in Shizuku, and allow Background processes in its permissions page. Android 12 and later otherwise kills the server started at boot.
 
-   1. Developer options, enable USB debugging and Wireless debugging.
-   2. Shizuku, pair with wireless debugging, start it. Grant Nearby devices and Local network when it asks, they gate the pairing discovery. Automatic pairing reads the code off the screen, so it also needs Shizuku's accessibility service turned on.
-   3. Grant the auto-start permission so it survives reboots, then enable Start on boot in Shizuku:
+     ```sh
+     adb shell pm grant moe.shizuku.privileged.api android.permission.WRITE_SECURE_SETTINGS
+     ```
 
-      ```sh
-      adb shell pm grant moe.shizuku.privileged.api android.permission.WRITE_SECURE_SETTINGS
-      ```
+   - Grant ShizuCallRecorder its permissions and app op, then enable automatic recording for incoming and outgoing calls:
 
-      Also allow Background processes in Shizuku's permissions page, Android 12 and later otherwise kills the server started at boot.
-   4. ShizuCallRecorder, grant notifications, phone state, call log and contacts, allow manage ongoing calls, then enable automatic recording for incoming and outgoing calls:
-
-      ```sh
-      adb shell pm grant com.kitsumed.shizucallrecorder android.permission.READ_CALL_LOG
-      adb shell pm grant com.kitsumed.shizucallrecorder android.permission.READ_PHONE_STATE
-      adb shell pm grant com.kitsumed.shizucallrecorder android.permission.READ_CONTACTS
-      adb shell pm grant com.kitsumed.shizucallrecorder android.permission.POST_NOTIFICATIONS
-      adb shell cmd appops set com.kitsumed.shizucallrecorder MANAGE_ONGOING_CALLS allow
-      ```
+     ```sh
+     adb shell pm grant com.kitsumed.shizucallrecorder android.permission.READ_CALL_LOG
+     adb shell pm grant com.kitsumed.shizucallrecorder android.permission.READ_PHONE_STATE
+     adb shell pm grant com.kitsumed.shizucallrecorder android.permission.READ_CONTACTS
+     adb shell pm grant com.kitsumed.shizucallrecorder android.permission.POST_NOTIFICATIONS
+     adb shell cmd appops set com.kitsumed.shizucallrecorder MANAGE_ONGOING_CALLS allow
+     ```
 
 ## Backups
 
@@ -51,43 +60,78 @@ Use the maintained [gulp79 fork](https://github.com/gulp79/Round-Sync) (`de.feli
 
 ## Settings
 
-`policy/profile.conf` holds the device settings and `policy/apps.conf` holds the app scoped state. Both are applied, verified and reverted by the same command, in one run with one snapshot, so they behave as a single declaration that is simply split by subject. Declaring the same key in both files is an error.
-
-The section decides the store. `system`, `secure` and `global` go to the Settings provider, `telephony` and the other listed DeviceConfig namespaces reach DeviceConfig, and the app scoped sections (`permissions`, `appops`, `role`, `deviceidle`, `standby`, `locale`, `applinks`, `applinks_domain`, `applinks_selection`) reach their own service. An unknown section is a parse error rather than a silent DeviceConfig write.
-
-App scoped entries name the package in the key (`<package>:<permission>` for permissions, app ops and domains, the package alone for the rest). An entry whose package is not installed for user 0 is skipped and counted, so one file still covers both phones.
+`policy/profile.conf` holds device settings. `policy/apps.conf` holds per-app state. They are one declaration split by subject, and declaring the same key in both is an error. One snapshot covers both.
 
 ```sh
-task apply      # dry run unless --yes is in CLI_ARGS
-task verify     # report drift
-task revert     # restore the values captured before the last apply
+task apply            # dry run
+task apply -- --yes   # write
+task verify           # report drift
+task revert           # restore the values captured before the last apply
 ```
 
-Every write is read back, in `apply` and in `revert` alike, because the platform accepts writes it then ignores: a DeviceConfig read-only flag, `pm grant` of a permission the app never declared, `cmd locale` on a package that is not installed (prints `Unknown package` and exits 0), `cmd deviceidle` on an unknown package, and `pm set-app-links` on a domain the app does not declare all exit 0 having changed nothing. Only the stored value decides success.
+The section decides the store:
 
-Reads are tri-state. `explicit` means the device holds a value somebody set: it is written, and revert writes it back. `implicit` means the platform derived the value because nobody set one (an app op with no row, a doze-whitelisted app pinned at standby bucket `exempted`, a ROM-shipped whitelist row, a `system_configured` domain state); apply writes the target and the readback decides whether it stuck, and revert resets the key so the derived value comes back rather than leaving the row apply created. `unset` means the store has nothing to say about the key, which is how a typo in a package or domain name shows up instead of reading as success.
+- `system`, `secure`, `global`: the Settings provider, Android's settings database.
+- `telephony` and the other listed DeviceConfig namespaces: DeviceConfig, a system settings store split into namespaces.
+- `permissions`, `appops`, `role`, `deviceidle`, `standby`, `locale`, `applinks`, `applinks_domain`, `applinks_selection`: their own service.
 
-The two stores differ in how much they can lie to you. DeviceConfig refuses an unknown flag with a `SecurityException`, so a key that does not exist on a phone fails loudly. The Settings provider accepts any key and echoes it back, so a vendor setting (`blue_light_filter*`, `aod_mode`, `protect_battery`, the Samsung vibration keys) reads as matching on a phone whose UI never consults it. `verify` cannot tell that apart from a real setting, so a profile entry that matters only on one phone is best kept in a per-phone file.
+An unknown section is an error, never a silent write.
 
-An app's own preferences (shared preferences, databases under `/data/data/<package>`) are not reachable over adb without root, so the profile stops at the platform-side state. Apps that keep their settings in external storage are the exception, because `adb` can read and write those files directly: Obtainium stores one JSON file per app under `/sdcard/Android/data/dev.imranr.obtainium/files/app_data/`, so its whole app list can be copied or diffed outside the app.
+App-scoped entries name the package in the key: `<package>:<permission>` for permissions, app ops and domains, and the package alone for the rest. An entry whose package is not installed for user 0 is skipped and counted, so one file covers both phones.
+
+Every write is read back. Exit 0 does not prove a change: the platform accepts some writes and then ignores them. Only the stored value decides.
+
+Each key reads one of three ways:
+
+- `explicit`: a value somebody set. Apply writes it; revert puts it back.
+- `implicit`: the platform derived it because nobody set one. Apply writes the target; revert resets the key so the derived value returns.
+- `unset`: the store has nothing. This is how a typo in a package or domain shows up.
+
+DeviceConfig rejects an unknown key loudly. The Settings provider accepts any key and echoes it back, so a vendor setting can read as matching on a phone whose UI ignores it. Keep a setting that matters on only one phone in a per-phone file.
+
+An app's own preferences under `/data/data/<package>` need root, so a profile stops at platform-side state. Apps that keep files under `/sdcard/Android/data/<package>/` are the exception: adb can copy those directly, and that is how Obtainium's app list moves.
 
 ## App settings through their own UI
 
-For everything else, the reproducible path is the app's own export and import screens, driven from a recipe. Each app gets one folder named as a normalized app name (lowercase, no spaces), and the recipe and its exports live in two separate trees:
+For app preferences, use the app's own export and import, driven by a recipe. Each app gets one folder:
 
 ```
-policy/data/obtainium/steps.json              committed: how to drive the app, the only file naming the package
-policy/data/obtainium/obtainium.json          committed: 45 of its 48 apps, all settings
-secrets/obtainium/obtainium.private.json      private: the 3 app entries named below
-
-policy/data/yamlauncher/steps.json            committed: same recipe shape
-policy/data/yamlauncher/yamlauncher.json      committed: the export, locationRegion zeroed
-secrets/yamlauncher/yamlauncher.private.json  private: the region it was zeroed from
+policy/data/<app>/steps.py                committed: how to drive the app
+policy/data/<app>/install.json            committed: release facts, when the app is installed here
+policy/data/<app>/<export>.json           committed: the export, sensitive values zeroed
+secrets/<app>/<export>.private.json       private: the values that were zeroed
 ```
 
-Two trees, because a recipe is policy anyone may read while an export describes one person's phone. Everything an export holds is public unless the recipe names it, so `private` is the exception list and never the rule.
+A recipe is a Python file. Each step is a function call, built with `uiu.dsl`:
 
-The list itself is in the private tree, because naming an entry is telling the world that entry exists:
+```python
+from uiu.dsl import key, launch, pull, recipe, tap, wait
+
+RECIPE = recipe(
+    package="com.example.demo",
+    artifact="demo.json",
+    backup=[
+        key("KEYCODE_HOME"),
+        launch("com.example.demo/.MainActivity", clear=True),
+        wait(desc="Settings"),
+        tap(desc="Settings"),
+        pull("/sdcard/Download/demo.json", "{{artifact}}"),
+    ],
+)
+```
+
+The module-level `RECIPE` is the whole contract. Selector arguments are `text`, `id`, `desc`, `text_contains`, `class_name` and `index`; `class_name` is the probe's `class`, renamed because Python reserves that word. A step that cannot run fails when the recipe loads, not halfway through a run.
+
+There are two trees because a recipe is policy anyone may read, while an export describes one person's phone. The folder name maps one tree to the other. The private tree is `--secrets`, `ANDROID_SECRETS_DIR`, or `./secrets`, in that order. It is its own git repository.
+
+Two lists decide what happens to a value that must not be published:
+
+- `redact` throws it away. Every export zeroes it, and a restore resets the field to empty.
+- `private` keeps it in the private tree. The public file keeps the zero of its type, and restore merges the private half back before pushing. Verify compares both halves, so a change is still reported. A missing private file is refused.
+
+A path may appear in one list or the other, never both. `private` needs a JSON export. `volatile` names fields that change on their own, such as timestamps. `sort` names lists whose order means nothing, such as `apps`, so exports compare equal.
+
+`private` can name a file. That is the safer default, because the list itself says which entries exist:
 
 ```json
 "private": "private.json"
@@ -95,69 +139,38 @@ The list itself is in the private tree, because naming an entry is telling the w
 
 ```json
 [
-  "settings.huaweiAppGallery-session",
+  "settings.accountToken",
   "apps[id=com.example.bank]"
 ]
 ```
 
-The recipe may also carry the list inline, which is right when the selector names nothing identifying, such as a settings key. A plain path names a value: it is lifted into the overlay and the artifact keeps the zero of that type, and a path that names a list takes the whole list out. A path with an identity names one element of a list: the whole element moves into the overlay and every other element stays published, which is how one bank app can leave the file while the other forty-seven stay in its history. An identity that matches nothing fails the run, because the alternative is publishing the entry it was written to hide, and a restore fails when the overlay holds no such entry rather than dropping the app from the phone.
-
-A restore merges the overlay back in before pushing, so publishing the rest costs nothing. An overlay can be empty, which means the app's own export already had nothing worth lifting, and it is still written, because a missing overlay has to mean the private half was lost rather than that the app had no values.
-
-A recipe that declares no `private` fields keeps its whole artifact in the private tree instead, which suits an app whose every field is personal or whose export is not JSON. Either way `.gitignore` allows only `steps.json` and JSON in `policy/data/*/`, and ignores `secrets/` in full, so neither tree can leak into the other.
-
-The app's folder name is the whole mapping between the trees: rename the folder and both move. The private tree is `--secrets`, `ANDROID_SECRETS_DIR`, or `./secrets` in that order, and it is a git repository of its own with its own remote, so `git status` in this one never mentions it.
-
-The same recipe runs the export for both backup and restore, so the two can never drift apart. Steps name their blobs with a bare file name, which resolves beside the artifact, so no step ever repeats a path.
-
-Nothing is cached beside the artifact. Its hash is computed when it is needed, so a hand-edited artifact simply becomes the new baseline instead of disagreeing with a stale digest file.
+A plain path moves one value out. A path with an identity moves one list element out and leaves the others public. An identity that matches nothing fails, because publishing the entry it should hide is worse. A plain path the app may omit is only a warning. A path that would cross a list is refused; use an identity instead. Neither list covers a value whose path or shape changes with your data.
 
 ```sh
-task ui-list                                  # recipes and whether an artifact is stored
+task ui-list                                  # recipes and whether an export is stored
 task ui-backup -- --app eu.ottop.yamlauncher
-task ui-verify -- --app eu.ottop.yamlauncher   # re-export and diff
+task ui-verify -- --app eu.ottop.yamlauncher  # re-export and diff
 task ui-restore -- --app eu.ottop.yamlauncher
 ```
 
-A step is one action: `launch`, `tap`, `type`, `clear`, `wait`, `key`, `scroll`, `sleep`, `pull`, `push`, `capture`, `assert`. Selectors match on `text`, `id`, `desc` or `textContains`, plus `index` for duplicates, and never on coordinates, so a layout shift in the app does not silently tap the wrong control. Every `tap`, `type` and `assert` takes a fresh `uiautomator dump` first, because the screen changes between steps and a stale view is how a recipe taps nothing.
+The engine is `uiu`, run with `uv run uiu`; the `task ui-*` names call it. It drives the phone through uiautomator2, whose server runs as the shell user, so nothing is installed on the device. A step is one action: `launch`, `tap`, `type`, `clear`, `wait`, `key`, `scroll`, `sleep`, `pull`, `push`, `capture`, `assert`.
 
-Two flags cover the two app families that cost the most time to script:
+Selectors match on `text`, `id`, `desc` or `textContains`, plus `index` for duplicates. They never use coordinates. A `type` without a selector writes into the field the previous step focused, which is the way into a search box with no label. `launch` with `"clear": true` stops the app first, so a run starts at the root screen. `pull` with `"newest": true` takes the newest match of a device glob. A pull waits for the file instead of a recipe sleeping first.
 
-- `launch` with `"clear": true` stops the app first, so a run always starts at the root screen instead of resuming the page the last run left open.
-- `pull` with `"newest": true` treats `from` as a device glob and takes the most recently modified match, for apps that stamp a timestamp into every export name. Those files are the app's own backups, so nothing is deleted.
+The recipe's keys are `package`, `artifact`, `volatile`, `redact`, `private`, `sort`, `backup` and `restore`. Path lists are dotted and name the leaf, for example `data.locationRegion.value`. A list is walked in place, so `apps.lastUpdateCheck` reaches every element.
 
-The recipe's own keys are `package`, `artifact`, `volatile`, `redact`, `private`, `sort`, `backup` and `restore`. Every path list uses the same dotted form and names the leaf whose value is touched, e.g. `data.locationRegion.value`. A list is walked in place, so `apps.lastUpdateCheck` reaches every element, and `sort` names a list whose order carries no meaning, e.g. `apps`, so a map-ordered export still compares equal.
+Restore is guarded. It exports the current state first, compares it with the stored export and overlay, and stops if they match. When they differ it prints the diff, writes an undo copy under `.state/ui/<package>/`, and refuses without `--force`. After the import it exports again and prints `restored` only when the phone matches; otherwise it reports a failure with the undo copy's path. Apps with a lock or biometrics gate will block a recipe, so leave those off on a driven phone.
 
-Write a recipe by probing the screens instead of guessing at them. `ui probe` prints one line per control with the exact selector a step takes, and `--tap` walks the app inside the same command, so the chain you type is the chain you record:
+Write a recipe by probing the screens, not by guessing:
 
 ```sh
 task ui-probe -- --launch dev.imranr.obtainium/.MainActivity --clear \
   --tap '{"desc": "Settings"}' --tap '{"desc": "Import/export"}'
 ```
 
-A label that several controls share is printed already disambiguated, by `class` where the classes differ and by `index` where they do not, and a label whose tap lands on a containing row is printed once with the control it hits. `--all` also prints the structural nodes that carry only an id. Flutter apps (Obtainium is one) put every label in `content-desc`, which the probe reports as `desc`, so a selector written against `text` no longer happens by accident.
+The probe prints one line per control with the exact selector a step takes. Flutter apps (Obtainium is one) put labels in `content-desc`, which the probe reports as `desc`, so a selector written against `text` will miss them. `--step` takes a step as JSON, for actions `--tap` cannot express. A failed step prints the step and the screen it saw.
 
-Restore is guarded. It exports the app's current state first, compares it with the stored artifact, and stops if they match. When they differ it prints the diff, writes the current export to `.state/ui/<package>/` as the undo copy, and refuses without `--force`. The undo folder is keyed on the package id rather than the readable folder name, so renaming a folder cannot mix two apps' copies. Apps that gate their settings screen behind a lock or biometrics will block the recipe, so leave those locks off on a phone that this tooling drives.
-
-An export is a snapshot of one phone, so a committed artifact leaks whatever the app happened to hold. Two path lists decide what happens to a value that must not be published:
-
-- `redact` throws it away. Every `pull` zeroes it, so nothing keeps the original and a restore resets the field to empty.
-- `private` keeps it, out of the artifact. Every `pull` lifts the value into the overlay, leaving the artifact with the zero of that type, and `push` merges the overlay back before the file is sent to the phone. A restore is therefore lossless, and a missing overlay is refused rather than silently pushing blanks.
-
-```json
-"volatile": ["created_at"],
-"private": ["data.location.value", "data.locationRegion.value"]
-```
-
-A path may appear in one list or the other, never both, and `private` needs a JSON artifact because the split is a JSON operation.
-
-The value is replaced by the zero of its own type (`""`, `false`, `0`) rather than deleted, because restore clears preferences and puts back only the keys the file names: a deleted key would disappear from the phone instead of resetting, and a type change would throw in the app's typed getter and fail the whole restore.
-
-Neither list hides real drift; each hides exactly what it names. `volatile` compares equal, `redact` compares empty, so once a field is redacted `ui verify` cannot see it change at all. That is the trade: the value is not in the repository, so there is nothing left to compare against. Redaction also only reaches values at a fixed path. A field whose shape varies with your data, a list that grows as you search, is not covered by either list.
-
-Some apps have no export at all. Their recipe uses `capture` instead, which writes the settings screens as XML beside the recipe; with no artifact to attach to, those captures live in `captures/`. That is a record to diff against, not something that can be replayed.
-
-If nothing of the app's state is reachable, `docs/app-data-backup.md` lists what each app actually offers.
+Some apps have no export. Their recipe uses `capture` instead, which writes the settings screens as XML into `<secrets>/<app>/captures/`. That is a record to diff against, not something that can be replayed.
 
 ## Apps no longer installed
 
@@ -165,7 +178,7 @@ Kept for reference:
 
 - AccuBattery
 - Simple-Flag-Secure: screenshots and recording with FLAG_SECURE; caused a boot failure.
-- Basic Call Recorder: stopped working on recent Android versions (v15-16). Replaced by ShizuCallRecorder.
+- Basic Call Recorder: stopped working on Android 15 and 16. Replaced by ShizuCallRecorder.
 - VSCodroid: VS Code on Android.
 - Niimbot: companion app for a label printer.
 - 1688 and Taobao idlefish.

@@ -1,0 +1,45 @@
+"""Yam Launcher: export and import its settings through the launcher's clock button."""
+
+from uiu.dsl import key, pull, push, recipe, scroll, sleep, tap, type_text, wait
+
+RECIPE = recipe(
+    package="eu.ottop.yamlauncher",
+    artifact="yamlauncher.json",
+    volatile=["created_at"],
+    private=["data.location.value", "data.locationRegion.value"],
+    backup=[
+        key("KEYCODE_HOME"),
+        wait(id="eu.ottop.yamlauncher:id/textClock"),
+        tap(id="eu.ottop.yamlauncher:id/textClock", duration=800),
+        wait(text="Set Default Home"),
+        scroll("down", times=2),
+        wait(text="Backup"),
+        tap(text="Backup"),
+        wait(desc="Show roots"),
+        key("KEYCODE_ESCAPE"),
+        wait(id="android:id/title", class_name="android.widget.EditText"),
+        type_text("{{artifact}}", id="android:id/title", class_name="android.widget.EditText"),
+        key("KEYCODE_ESCAPE"),
+        wait(id="android:id/title", text_contains="{{artifact}}"),
+        tap(id="android:id/button1"),
+        pull("/sdcard/Download/{{artifact}}", "{{artifact}}"),
+    ],
+    restore=[
+        key("KEYCODE_HOME"),
+        wait(id="eu.ottop.yamlauncher:id/textClock"),
+        tap(id="eu.ottop.yamlauncher:id/textClock", duration=800),
+        wait(text="Set Default Home"),
+        scroll("down", times=2),
+        wait(text="Restore"),
+        push("{{artifact}}", "/sdcard/Download/{{artifact}}"),
+        tap(text="Restore"),
+        wait(id="com.google.android.documentsui:id/option_menu_search"),
+        tap(id="com.google.android.documentsui:id/option_menu_search"),
+        wait(id="com.google.android.documentsui:id/search_src_text"),
+        type_text("{{artifact}}", id="com.google.android.documentsui:id/search_src_text"),
+        key("KEYCODE_ESCAPE"),
+        wait(id="android:id/title", text_contains="{{artifact}}"),
+        tap(id="android:id/title", text_contains="{{artifact}}"),
+        sleep(3),
+    ],
+)

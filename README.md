@@ -1,6 +1,6 @@
 # Android dotfiles
 
-Tooling and notes for two Android phones: a personal device on a custom ROM, and a work device that stays on its stock firmware. Device models, codenames and serials are deliberately not recorded in this repository.
+Tooling and notes for two Android phones: a personal phone on a custom ROM (a community-built Android image) and a work phone on its stock firmware (what the manufacturer ships). Device models, codenames and serials are deliberately not recorded here.
 
 ## Guides
 
@@ -12,25 +12,26 @@ Tooling and notes for two Android phones: a personal device on a custom ROM, and
 
 ## Prerequisites
 
-Everything below runs inside the devenv shell, which provides `adb`, `fastboot`, Go and `task`:
+Run everything inside the devenv shell, which provides `adb` (the Android Debug Bridge, a command line link to the phone), `fastboot`, Python, `uv` and `task`:
 
 ```sh
 devenv shell
 ```
 
-Enable USB debugging on the phone and authorize the host. Every command runs through `task`, never a built binary, because Go exists only inside devenv.
+Enable USB debugging on the phone and authorize the host. Run every command through `task`, never a built binary: the toolchains exist only inside devenv. Two Python commands live here: `androidctl` applies device state (packages, settings, app installs), and `uiu` replays per-app export/import recipes. The `ui-*` tasks run the second one.
 
 ## Commands
 
 ```sh
 task                      # list every task
-task check                # gofmt, vet, tests
+task check                # ruff, format check, pytest
 task report               # every package with the facts that decide a keep/kill call
 task health               # launcher, keyboard, roles, crash buffer
 task disable -- policy/packages.txt --dry-run
 task disable -- policy/packages.txt
 task restore              # re-enable everything the newest snapshot saw enabled
-task obtainium            # install Obtainium, checksum verified
+task init                 # install Shizuku-Next and Obtainium, start Shizuku
+task install -- dev.imranr.obtainium   # install an app from its release, checksum verified
 task apply                # dry run of profile.conf and apps.conf
 task apply -- --yes       # write both
 task verify               # report drift across both
@@ -41,7 +42,7 @@ task ui-verify -- --app <package>    # re-export and diff
 task ui-restore -- --app <package>   # replay the artifact, guarded
 ```
 
-App recipes live in `policy/data/<app>/steps.json`, the folder being the app's normalized name, lowercase and path friendly, e.g. `yamlauncher`. The exports those recipes produce are a snapshot of one phone: the artifact commits with the values a recipe marks `private` zeroed, and only those values live in `./secrets/<app>/`, which is its own repository and ignored here.
+App directories live in `policy/data/<app>/`; the folder is the app's normalized name, lowercase and path friendly, e.g. `yamlauncher`. `steps.py` drives its backup and restore in `uiu`, written as Python step calls with `uiu.dsl`, and `install.json`, when present, holds the package id and release facts that `task install` and `task init` need. Each export is a snapshot of one phone. The artifact commits with the values a recipe marks `private` zeroed; only those live in `./secrets/<app>/`, its own repository, ignored here.
 
 ## License
 

@@ -1,6 +1,6 @@
 {
  "app_id": "eu.ottop.yamlauncher",
- "created_at": "2026-11-15T11:49:02+0100",
+ "created_at": "2026-11-15T23:11:40+0100",
  "data": {
   "alphabetIndexEnabled": {
    "type": "Boolean",
@@ -136,7 +136,7 @@
   },
   "leftSwipeApp": {
    "type": "String",
-   "value": "Camera\u00a7splitter\u00a7com.sec.android.app.camera/com.sec.android.app.camera.Camera\u00a7splitter\u00a70"
+   "value": "Camera§splitter§com.sec.android.app.camera/com.sec.android.app.camera.Camera§splitter§0"
   },
   "locationRegion": {
    "type": "String",
@@ -168,7 +168,7 @@
   },
   "rightSwipeApp": {
    "type": "String",
-   "value": "Phone\u00a7splitter\u00a7org.fossify.phone/org.fossify.phone.activities.DialpadActivity\u00a7splitter\u00a70"
+   "value": "Phone§splitter§org.fossify.phone/org.fossify.phone.activities.DialpadActivity§splitter§0"
   },
   "searchAlignment": {
    "type": "String",
@@ -188,23 +188,23 @@
   },
   "shortcut0": {
    "type": "String",
-   "value": "app.morphe.android.youtube/app.morphe.android.youtube.morphe_original_5\u00a7splitter\u00a70\u00a7splitter\u00a7YouTube\u00a7splitter\u00a7false"
+   "value": "app.morphe.android.youtube/app.morphe.android.youtube.morphe_original_5§splitter§0§splitter§YouTube§splitter§false"
   },
   "shortcut1": {
    "type": "String",
-   "value": "com.discord/com.discord.main.MainDefault\u00a7splitter\u00a70\u00a7splitter\u00a7Discord\u00a7splitter\u00a7false"
+   "value": "com.discord/com.discord.main.MainDefault§splitter§0§splitter§Discord§splitter§false"
   },
   "shortcut2": {
    "type": "String",
-   "value": "com.twitter.android/com.twitter.android.StartActivity\u00a7splitter\u00a70\u00a7splitter\u00a7X\u00a7splitter\u00a7false"
+   "value": "com.twitter.android/com.twitter.android.StartActivity§splitter§0§splitter§X§splitter§false"
   },
   "shortcut3": {
    "type": "String",
-   "value": "md.obsidian/md.obsidian.MainActivity\u00a7splitter\u00a70\u00a7splitter\u00a7Obsidian\u00a7splitter\u00a7false"
+   "value": "md.obsidian/md.obsidian.MainActivity§splitter§0§splitter§Obsidian§splitter§false"
   },
   "shortcut4": {
    "type": "String",
-   "value": "org.ironfoxoss.ironfox/org.ironfoxoss.ironfox.App\u00a7splitter\u00a70\u00a7splitter\u00a7IronFox\u00a7splitter\u00a7false"
+   "value": "org.ironfoxoss.ironfox/org.ironfoxoss.ironfox.App§splitter§0§splitter§IronFox§splitter§false"
   },
   "shortcutAlignment": {
    "type": "String",

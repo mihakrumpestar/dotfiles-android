@@ -1,20 +1,20 @@
 # Custom ROM
 
-For the personal phone. The work phone stays on its stock firmware and only follows [Debloat](debloat.md); both share [Shared setup](shared-setup.md).
+For the personal phone. A custom ROM is a community-built Android image. The work phone stays on its stock firmware and only follows [Debloat](debloat.md); both share [Shared setup](shared-setup.md).
 
 Device models and codenames are not recorded here. Check yours before downloading anything: `fastboot getvar product`.
 
-Choosing a phone matters more than choosing a ROM, because an unlockable bootloader is getting rare: [bootloader-unlock-wall-of-shame](https://github.com/zenfyrdev/bootloader-unlock-wall-of-shame).
+Choosing a phone matters more than choosing a ROM. An unlockable bootloader (the lock you must open to flash a ROM) is getting rare: [bootloader-unlock-wall-of-shame](https://github.com/zenfyrdev/bootloader-unlock-wall-of-shame).
 
 ## Root methods
 
-- Magisk: installs by flashing in recovery, detectable by banking apps.
+- Magisk: installs by flashing in recovery (the boot menu that installs system images), detectable by banking apps.
 - KernelSU Next: has to be supported or included by the ROM, undetectable.
 - APatch: flashes like Magisk, runs like KernelSU.
 
 ## ROMs
 
-- [crDroid](https://crdroid.net/downloads): clean AOSP base with the hardware fixes this class of device needs.
+- [crDroid](https://crdroid.net/downloads): clean AOSP (Android Open Source Project) base with the hardware fixes this class of device needs.
 
 Check that the ROM project lists your exact model before unlocking. An unsupported model usually boots, then loses a subsystem you cannot fix without the vendor firmware.
 
@@ -48,7 +48,7 @@ Check that the ROM project lists your exact model before unlocking. An unsupport
 
    First time installation:
 
-   - Wipe Dalvik, cache and format data. This is not optional.
+   - Wipe Dalvik, cache and format data. This step is not optional.
    - Reboot recovery.
    - Flash the ROM:
 
