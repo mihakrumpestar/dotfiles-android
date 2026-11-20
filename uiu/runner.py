@@ -17,8 +17,8 @@ import time
 from pathlib import Path
 from xml.etree import ElementTree
 
-from . import artifacts, split
-from .device import DeviceError, UiDevice
+from . import artifacts, split, vault
+from .device import DeviceError, UiDevice, first_line
 from .recipe import Recipe, Step
 from .tree import Node, Selector, TreeError, hit_target, parse_dump, resolve
 
@@ -108,12 +108,12 @@ def merge_file(recipe: Recipe) -> bytes:
     out of the repository, so undoing with it would drop those entries from the
     phone.
     """
-    public = recipe.artifact_path().read_bytes()
+    public = vault.read(recipe, recipe.artifact_path())
     if not recipe.is_private:
         return public
     overlay = recipe.private_path()
     try:
-        private = overlay.read_bytes()
+        private = vault.read(recipe, overlay)
     except OSError as error:
         raise DeviceError(
             f"reading {overlay}: {error.strerror or error}; the undo copy would be missing every private entry"
@@ -196,6 +196,21 @@ class Runner:
         self.stale()
         self._press(x, y, step.duration)
 
+    def _if_absent(self, step: Step) -> None:
+        """Run the block's steps only when the selector is not on screen.
+
+        One read decides it. A block that runs leaves the dump for its first
+        child, the way a matched `wait` pays one dump for the tap after it, and
+        a block that is skipped leaves it for the next top-level step. A failed
+        dump is not an absence: `snapshot` raises, and the run stops.
+        """
+        nodes, _ = self.snapshot()
+        try:
+            resolve(nodes, selector_of(step))
+        except TreeError:
+            for child in step.steps:
+                self.step(child)
+
     def _press(self, x: int, y: int, duration: int) -> None:
         if duration > 0:
             self.device.long_press(x, y, duration)
@@ -236,15 +251,35 @@ class Runner:
             raise DeviceError(f'field still holds "{node.text}" after deleting {left} characters')
 
     def _wait(self, step: Step) -> None:
+        selector = selector_of(step)
         deadline = time.monotonic() + step.timeout
         last: Exception = DeviceError("no dump yet")
         while True:
             try:
                 nodes, _ = self.snapshot()
-                resolve(nodes, selector_of(step))
-                return
-            except (TreeError, DeviceError) as error:
+            except DeviceError as error:
+                # A failed read proves nothing about the screen, so it neither
+                # satisfies an absence nor fails one.
                 last = error
+            else:
+                try:
+                    node = resolve(nodes, selector)
+                except TreeError as error:
+                    if step.absent:
+                        return
+                    last = error
+                else:
+                    if step.absent:
+                        last = DeviceError(f"{selector} is still on screen")
+                    elif step.checked is None:
+                        return
+                    else:
+                        now = hit_target(nodes, node).checked
+                        if now == step.checked:
+                            return
+                        last = DeviceError(
+                            f"checked is still {str(now).lower()}, want {str(step.checked).lower()}"
+                        )
             if time.monotonic() > deadline:
                 raise DeviceError(f"waited {step.timeout:.0f}s: {last}") from last
             # The screen does not match yet, so the next attempt reads it again.
@@ -257,6 +292,14 @@ class Runner:
         self.stale()
         self.device.key(step.code)
 
+    def _shell(self, step: Step) -> None:
+        # A command can change the screen, so the next read must not reuse the
+        # pre-command dump.
+        self.stale()
+        result = self.device.shell(step.command)
+        if not result.ok:
+            raise DeviceError(f"shell {step.command}: {first_line(result.output)}")
+
     def _scroll(self, step: Step) -> None:
         self.stale()
         width, height = self.device.screen_size()
@@ -268,6 +311,22 @@ class Runner:
             # A lazy-loading list needs a beat after the gesture before its next
             # page exists, or the next swipe outruns it.
             time.sleep(1.0)
+            if step.selector is not None and self._present(step.selector):
+                return
+        if step.selector is not None:
+            raise DeviceError(
+                f"scrolled {step.times} time(s) {step.direction} without finding {step.selector}"
+            )
+
+    def _present(self, selector: Selector) -> bool:
+        """Whether the screen after a gesture already holds what a scroll looks for."""
+        self.stale()
+        try:
+            nodes, _ = self.snapshot()
+            resolve(nodes, selector)
+        except (TreeError, DeviceError):
+            return False
+        return True
 
     def _sleep(self, step: Step) -> None:
         self.stale()
@@ -317,35 +376,64 @@ class Runner:
         return self.tmp
 
     def publish(self, final: Path, body: bytes, overlay: bytes | None) -> None:
-        """Replace the artifact and its overlay only once both are complete.
+        """Replace the artifact and its overlay as one pair.
 
-        Each file is written under a temporary name in its own directory, then
-        renamed into place, so a failure leaves the previous pair untouched and
-        a reader never sees half a file. The artifact keeps the mode a public
-        file has; the overlay is owner-only at 0600 because it is the half that
-        may not be published.
+        Both bodies are encrypted before anything is written, then both are
+        staged under a temporary name in their own directory, so a failure
+        while encrypting or staging leaves the previous pair untouched. The
+        overlay is renamed first and the artifact last: a crash between the two
+        renames can leave the overlay newer than the artifact, and `uiu verify`
+        reports that. The artifact keeps the mode a public file has; the
+        overlay is owner-only at 0600 because it is the half that may not be
+        published.
         """
         final.parent.mkdir(parents=True, exist_ok=True)
-        self._write_atomic(final, body, 0o644)
+        pairs: list[tuple[Path, bytes, int]] = [
+            (final, vault.write(self.recipe, final, body), 0o644)
+        ]
         if overlay is not None:
             path = self.recipe.private_path()
             path.parent.mkdir(parents=True, exist_ok=True)
-            self._write_atomic(path, overlay, 0o600)
+            pairs.append((path, vault.write(self.recipe, path, overlay), 0o600))
+        staged: list[tuple[Path, Path]] = []
+        try:
+            for target, staged_body, mode in pairs:
+                staged.append((target, self._stage(target, staged_body, mode)))
+            # The overlay goes first, so the artifact a reader may commit is
+            # never newer than the private half it was split from.
+            for target, temporary in reversed(staged):
+                os.replace(temporary, target)
+        except BaseException:
+            # A renamed overlay cannot be rolled back; the docstring says so.
+            for _, temporary in staged:
+                temporary.unlink(missing_ok=True)
+            raise
 
     @staticmethod
-    def _write_atomic(path: Path, body: bytes, mode: int) -> None:
+    def _stage(path: Path, body: bytes, mode: int) -> Path:
+        """Write `body` to a temporary file beside `path`, fsynced and chmodded."""
         handle, temporary = tempfile.mkstemp(
             dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
         )
+        staged = Path(temporary)
         try:
             with os.fdopen(handle, "wb") as file:
                 file.write(body)
                 file.flush()
                 os.fsync(file.fileno())
-            os.chmod(temporary, mode)
-            os.replace(temporary, path)
+            os.chmod(staged, mode)
         except BaseException:
-            Path(temporary).unlink(missing_ok=True)
+            staged.unlink(missing_ok=True)
+            raise
+        return staged
+
+    @staticmethod
+    def _write_atomic(path: Path, body: bytes, mode: int) -> None:
+        staged = Runner._stage(path, body, mode)
+        try:
+            os.replace(staged, path)
+        except BaseException:
+            staged.unlink(missing_ok=True)
             raise
 
     def fetch(self, remote: str, local: Path) -> None:
@@ -376,7 +464,9 @@ class Runner:
         _, body = self.snapshot()
         directory = self.recipe.capture_path()
         directory.mkdir(parents=True, exist_ok=True)
-        (directory / (step.name + ".xml")).write_text(indent_xml(body))
+        path = directory / (step.name + ".xml")
+        # Staged like a publish, so a crash cannot truncate an envelope.
+        self._write_atomic(path, vault.write(self.recipe, path, indent_xml(body).encode()), 0o644)
 
     def _assert(self, step: Step) -> None:
         nodes, _ = self.snapshot()
@@ -386,37 +476,78 @@ class Runner:
                 f"checked is {str(target.checked).lower()}, want {str(step.checked).lower()}"
             )
 
+    def _ensure(self, step: Step) -> None:
+        nodes, _ = self.snapshot()
+        target = hit_target(nodes, resolve(nodes, selector_of(step)))
+        if target.checked == step.checked:
+            # A tap flips a row, so tapping a row that already agrees would undo
+            # the previous run. The cached dump stays valid: nothing changed.
+            return
+        x, y = target.bounds.centre
+        self.stale()
+        self._press(x, y, 0)
+        # The row repaints after the tap, so its state is read again rather than
+        # trusted from the gesture, and a row that never flips is an error.
+        deadline = time.monotonic() + 5
+        while True:
+            self.stale()
+            nodes, _ = self.snapshot()
+            now = hit_target(nodes, resolve(nodes, selector_of(step))).checked
+            if now == step.checked:
+                return
+            if time.monotonic() > deadline:
+                raise DeviceError(
+                    f"checked is still {str(now).lower()}, want {str(step.checked).lower()}"
+                )
+            time.sleep(0.15)
+
     # Files
 
     def local_path(self, path: str) -> Path:
+        """The host file a step's local path names.
+
+        A name that equals the recipe's artifact means the export file: it lives
+        in the blob directory the store attached, and it is the one file the
+        private overlay applies to. Any other name is a payload committed beside
+        `app.py`, so it resolves under the recipe's own directory.
+        """
         if path.startswith("/"):
             raise DeviceError(
-                f"{path} is absolute; a recipe only names files in the app's own directory"
+                f"{path} is absolute; a local path is relative to the app file or the export root"
             )
-        if self.recipe.blob_dir is None:
-            raise DeviceError(f"{path} needs the app's blob directory")
-        return self.recipe.blob_dir / path
+        if path == self.recipe.artifact:
+            if self.recipe.blob_dir is None:
+                raise DeviceError(f"{path} needs the app's blob directory")
+            return self.recipe.artifact_path()
+        if self.recipe.dir is None:
+            raise DeviceError(f"{path} is a payload but this recipe has no app directory")
+        return self.recipe.dir / path
 
     def pushable(self, local: Path) -> Path:
-        """The file a push sends: the artifact with its private overlay merged back in.
+        """The file a push sends: the stored artifact as plaintext.
 
-        The merged copy is written to the run's temporary directory, so the
-        committed artifact never carries the values. A recipe with private fields
-        must have the overlay: pushing the zeroed half would reset the phone to
-        blanks instead of restoring it.
+        Whatever the vault covers is staged decrypted in the run's temporary
+        directory, so the device never receives an envelope. A recipe with
+        private fields also gets its overlay merged back in, because pushing the
+        zeroed half would reset the phone to blanks instead of restoring it. A
+        payload beside `app.py` is not covered and goes out as committed.
         """
-        if not self.recipe.is_private:
+        artifact = local == self.recipe.artifact_path()
+        covered = self.recipe.vault is not None and self.recipe.vault.covers(local)
+        if not covered and not (artifact and self.recipe.is_private):
             return local
-        overlay = self.recipe.private_path()
-        try:
-            private = overlay.read_bytes()
-        except OSError as error:
-            raise DeviceError(
-                f"reading {overlay}: {error.strerror or error}; a recipe with private fields needs it beside the artifact"
-            ) from error
-        merged = split.merge_export(local.read_bytes(), private, self.recipe.private)
+        body = vault.read(self.recipe, local)
+        if self.recipe.is_private:
+            overlay = self.recipe.private_path()
+            try:
+                private = vault.read(self.recipe, overlay)
+            except OSError as error:
+                raise DeviceError(
+                    f"reading {overlay}: {error.strerror or error}; a recipe with private fields needs it beside the artifact"
+                ) from error
+            body = split.merge_export(body, private, self.recipe.private)
         out = self.staging() / ("push-" + local.name)
-        out.write_bytes(merged)
+        out.write_bytes(body)
         os.chmod(out, 0o600)
         return out
 

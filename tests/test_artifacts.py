@@ -2,25 +2,38 @@
 
 from __future__ import annotations
 
+import hashlib
+import io
 import json
+import zipfile
 
 import pytest
 from support import REPO
 
-from uiu import artifacts
-from uiu import recipe as recipes
+from uiu import artifacts, spec
 from uiu import store as stores
 
 
 def test_committed_artifacts_round_trip_byte_for_byte():
     """The committed artifacts are the reference, so re-encoding each one checks
-    indent, key order, escaping and the trailing newline at once."""
-    paths = sorted(
-        path for path in (REPO / "policy/data").glob("*/*.json") if path.name != recipes.STEPS_FILE
-    )
-    assert paths
-    for path in paths:
+    indent, key order, escaping and the trailing newline at once.
+
+    Only an app's own artifact is checked: a file beside `app.py` that is a
+    payload for the app to import keeps whatever shape that app reads.
+    """
+    checked = 0
+    for app_file in sorted((REPO / "policy/data").glob("*/app.py")):
+        recipe = spec.parse(app_file).recipe
+        if recipe is None or not recipe.artifact:
+            continue
+        path = app_file.parent / recipe.artifact
+        if path.suffix != ".json":
+            # A zip artifact is compared by member, not re-encoded as JSON.
+            continue
+        assert path.is_file(), path
         assert artifacts.dumps(json.loads(path.read_bytes())) == path.read_bytes(), path
+        checked += 1
+    assert checked
 
 
 def test_go_escaping():
@@ -110,12 +123,13 @@ def test_compact_form_has_no_separator_whitespace():
 
 def test_digests_match_the_go_tool():
     expected = {
-        "obtainium": "26e0e4aa5b64d394b6b8ae5685f9618b07b457273254592df0c0f70a2675ec47",
+        "obtainium": "d19c7010033fd5269ddeeae7422bc96860de4b780eb02a61fbd51402901c12e5",
         "yamlauncher": "600ae3aaa52476844e201d7784092eb66a24169149c5e87d8052f14304d21526",
     }
     for app, digest in expected.items():
-        recipe = recipes.parse(REPO / "policy/data" / app / recipes.STEPS_FILE)
-        recipe.blob_dir = recipe.dir
+        recipe = spec.parse(REPO / "policy/data" / app / "app.py").recipe
+        assert recipe is not None
+        recipe.blob_dir = REPO / "policy/data" / app
         assert stores.artifact_digest(recipe) == digest, app
 
 
@@ -163,3 +177,70 @@ def test_diff_masks_and_reports():
 def test_binary_diff_is_a_note():
     text = artifacts.diff(b"\xff\xfe", b"\xff\xfd", "demo.bin")
     assert text.startswith("binary artifacts differ:")
+
+
+def make_zip(
+    members: list[tuple[str, bytes]], date_time: tuple[int, int, int, int, int, int]
+) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name, data in members:
+            info = zipfile.ZipInfo(name, date_time=date_time)
+            archive.writestr(info, data)
+    return buffer.getvalue()
+
+
+ZIP_MEMBERS = [("app/settings.json", b'{"a": 1}'), ("app/notes.txt", b"one\n")]
+
+
+def test_zip_member_order_and_timestamps_are_not_drift():
+    old = make_zip(ZIP_MEMBERS, (2020, 1, 1, 0, 0, 0))
+    new = make_zip(list(reversed(ZIP_MEMBERS)), (2024, 6, 2, 3, 4, 6))
+    assert old != new
+    assert artifacts.canonical(old, [], []) == artifacts.canonical(new, [], [])
+
+
+def test_zip_digest_is_stable_across_equivalent_archives():
+    old = make_zip(ZIP_MEMBERS, (2020, 1, 1, 0, 0, 0))
+    new = make_zip(list(reversed(ZIP_MEMBERS)), (2024, 6, 2, 3, 4, 6))
+    assert artifacts.digest(artifacts.canonical(old, [], [])) == artifacts.digest(
+        artifacts.canonical(new, [], [])
+    )
+
+
+@pytest.mark.parametrize(
+    ("members", "name"),
+    [
+        ([("app/settings.json", b'{"a": 2}'), ("app/notes.txt", b"one\n")], "app/settings.json"),
+        ([("app/settings.json", b'{"a": 1}'), ("app/extra.bin", b"x")], "app/extra.bin"),
+    ],
+)
+def test_zip_content_change_names_the_member(members, name):
+    old = make_zip(ZIP_MEMBERS, (2020, 1, 1, 0, 0, 0))
+    new = make_zip(members, (2020, 1, 1, 0, 0, 0))
+    old_form = artifacts.canonical(old, [], [])
+    new_form = artifacts.canonical(new, [], [])
+    assert old_form != new_form
+    text = artifacts.diff(old_form, new_form, "demo.zip")
+    assert f"-{name} " in text or f"+{name} " in text
+
+
+def test_zip_canonical_form_is_one_line_per_member():
+    body = make_zip(ZIP_MEMBERS, (2020, 1, 1, 0, 0, 0))
+    lines = artifacts.canonical(body, ["ignored"], ["ignored"]).decode().splitlines()
+    assert lines[0] == "zip"
+    assert [line.split()[0] for line in lines[1:]] == ["app/notes.txt", "app/settings.json"]
+    for line in lines[1:]:
+        name, size, sha = line.split()
+        assert size == str(len(dict(ZIP_MEMBERS)[name]))
+        assert sha == hashlib.sha256(dict(ZIP_MEMBERS)[name]).hexdigest()
+
+
+def test_zip_magic_without_an_archive_is_unchanged():
+    body = b"PK\x03\x04 not really a zip"
+    assert artifacts.canonical(body, ["a"], []) == body
+
+
+def test_non_zip_bytes_are_unchanged():
+    body = b"PK\x05\x06 barely anything"
+    assert artifacts.canonical(body, ["a"], ["a.b"]) == body

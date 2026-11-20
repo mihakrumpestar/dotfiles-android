@@ -1,9 +1,13 @@
-"""Discovery and storage: which recipe is which app, and where its bytes live.
+"""Discovery and storage: which app is which, and where its bytes live.
 
-Two trees, never one. `policy/data/<name>/steps.py` is committed policy that
-anyone may read, and `secrets/<name>/` holds a snapshot of one phone. A recipe
-that declares `private` fields is safe by construction, so its artifact lives
-beside the recipe and only its overlay stays in the private tree. Every other
+One tree of committed policy: `policy/data/<name>/app.py`, one file per app,
+holding its package, install facts, device state and screen walk. The private
+tree, `secrets/<name>/`, holds a snapshot of one phone, the app files that must
+not be public, and the selector lists that name private entries. App files and
+selector lists are plaintext policy, not export data: they are read as
+plaintext, and only the export files beside them are encrypted. An app that
+declares `private` fields is safe by construction, so its artifact lives beside
+its app file and only its overlay stays in the private tree. Every other
 artifact stays entirely private.
 """
 
@@ -11,12 +15,13 @@ from __future__ import annotations
 
 import hashlib
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
-from . import artifacts, split
-from .recipe import STEPS_FILE, Recipe, RecipeError, load_private, parse, valid_package
+from . import artifacts, split, vault
+from .recipe import APP_FILE, Recipe, RecipeError, load_private, valid_package
+from .spec import App, parse
 
 DEFAULT_APPS = "policy/data"
 DEFAULT_SECRETS = "secrets"
@@ -24,14 +29,15 @@ DEFAULT_STATE = ".state"
 
 
 class StoreError(RuntimeError):
-    """A tree that is missing, misplaced, or not text a recipe can use."""
+    """A tree that is missing, misplaced, or not text an app file can use."""
 
 
 @dataclass
 class Store:
     apps: Path | str = DEFAULT_APPS
     # The private data root. It is a separate tree because an export is a
-    # snapshot of one phone and the recipe beside it is policy.
+    # snapshot of one phone, and it also holds app files that must not be
+    # public.
     secrets: Path | str | None = None
     state: Path | str = DEFAULT_STATE
 
@@ -46,7 +52,7 @@ class Store:
         self.state = Path(self.state)
 
     def data_root(self) -> Path:
-        """The private export root, refused when it overlaps the recipe tree."""
+        """The private export root, refused when it overlaps the policy tree."""
         return _outside(
             Path(self.secrets or DEFAULT_SECRETS).resolve(),
             Path(self.apps).resolve(),
@@ -54,48 +60,66 @@ class Store:
         )
 
     def state_root(self) -> Path:
-        """The undo-copy root, refused when it sits in the recipe tree.
+        """The undo-copy root, refused when it overlaps the policy or private tree.
 
         An undo copy is a full export, so it must not land where a commit could
-        pick it up. The same check as the export root applies.
+        pick it up. It is also plaintext at 0600, so it must not sit inside the
+        encrypted root or over it: the mode hides it from other users, not from
+        anyone holding the tree.
         """
-        return _outside(Path(self.state).resolve(), Path(self.apps).resolve(), "state root")
+        state = Path(self.state).resolve()
+        _outside(state, Path(self.apps).resolve(), "state root")
+        secrets = self.data_root()
+        if _within(state, secrets):
+            raise StoreError(
+                f"the state root {state} is inside the private tree {secrets};"
+                " an undo copy is plaintext, so it must not sit under the encrypted root"
+            )
+        if _within(secrets, state):
+            raise StoreError(
+                f"the state root {state} contains the private tree {secrets};"
+                " an undo copy is plaintext, so the encrypted root must not sit inside it"
+            )
+        return state
 
-    def all(self) -> tuple[list[Recipe], list[RecipeError]]:
-        """Every recipe in the tree, plus the files that did not parse.
+    def all(self) -> tuple[list[App], list[RecipeError]]:
+        """Every app file in the policy and private trees, plus the files that did not parse.
 
-        A broken recipe is reported rather than hidden, and the rest are still
+        A broken file is reported rather than hidden, and the rest are still
         returned, so listing the tree stays useful while one file is edited.
+        The vault is attached but its selectors stay unloaded, so this never
+        decrypts and needs no key. An app file in the private tree is plaintext
+        policy: it is read directly, and the export files beside it are the
+        encrypted half.
         """
         root = self.data_root()
-        paths = sorted(Path(self.apps).glob(f"*/{STEPS_FILE}"))
+        paths = app_files(self.apps, self.secrets)
         if not paths:
-            raise StoreError(f"no recipes under {Path(self.apps) / '*' / STEPS_FILE}")
-        recipes: list[Recipe] = []
+            raise StoreError(
+                f"no app files under {Path(self.apps) / '*' / APP_FILE} or {root / '*' / APP_FILE}"
+            )
+        apps: list[App] = []
         errors: list[RecipeError] = []
         for path in paths:
             try:
-                recipe = parse(path)
+                app = parse(path)
+                # The export tree mirrors the app folder by name, so the folder
+                # an app file sits in is the whole mapping between them.
+                if app.recipe is not None:
+                    app = replace(app, recipe=_with_data(app.recipe, path.parent, root / app.name))
             except RecipeError as error:
                 errors.append(error)
                 continue
-            # The export tree mirrors the recipe tree by app name, so the folder
-            # a recipe sits in is the whole mapping between them.
-            recipe.data_dir = root / recipe.name
-            try:
-                recipe = load_private(recipe)
-            except RecipeError as error:
-                errors.append(error)
-                continue
-            recipe.blob_dir = recipe.dir if recipe.is_private else recipe.data_dir
-            recipes.append(recipe)
-        return recipes, errors
+            apps.append(app)
+        return apps, errors
 
-    def load(self, package: str) -> Recipe:
-        """Find an app's recipe by package id, which lives inside the file.
+    def load(self, package: str) -> App:
+        """Find an app by package id, which lives inside the file.
 
-        A recipe that does not parse is fatal here, because the duplicate check
-        is only sound when every file was read.
+        An app file that does not parse is fatal here, because the duplicate
+        check is only sound when every file was read. The selectors are loaded
+        here, the one place a recipe is about to run, so `all` can list the
+        tree without the key.
         """
         if not valid_package(package or ""):
             raise StoreError(f"not a package name: {package!r}")
@@ -105,22 +129,40 @@ class Store:
                 f"export root {root} is not a directory: clone the secrets repository"
                 " into ./secrets, or pass --secrets"
             )
-        recipes, errors = self.all()
+        apps, errors = self.all()
         if errors:
             raise StoreError(str(errors[0]))
-        matching = [recipe for recipe in recipes if recipe.package == package]
+        matching = [app for app in apps if app.package == package]
         if not matching:
-            raise StoreError(f'no recipe declares package "{package}" under {self.apps}')
+            raise StoreError(f'no app file declares package "{package}" under {self.apps}')
         if len(matching) > 1:
-            names = ", ".join(str(recipe.dir) for recipe in matching)
-            raise StoreError(f'package "{package}" is declared by more than one recipe: {names}')
-        return matching[0]
+            names = ", ".join(str(app.dir) for app in matching)
+            raise StoreError(f'package "{package}" is declared by more than one app file: {names}')
+        found = matching[0]
+        if found.recipe is None:
+            return found
+        return replace(found, recipe=load_private(found.recipe))
 
-    def state_of(self, recipe: Recipe) -> str:
-        """One word for `uiu list`: what exists beside the recipe right now."""
+    def state_of(self, app: App) -> str:
+        """One word for `uiu list`: what exists beside the app file right now.
+
+        A covered file that is not a SOPS envelope is marked `plaintext`: the
+        store promises ciphertext at rest, and a file left bare by a migration
+        otherwise looks exactly like a healthy one. The raw bytes are tested,
+        never decrypted, so listing still needs no key.
+        """
+        recipe = app.recipe
+        if recipe is None:
+            return "policy only"
         if recipe.artifact:
             stored = recipe.artifact_path()
             state = "stored" if stored.is_file() else "missing"
+            # Either half can be bare while its pair is gone, and both are
+            # covered, so each is checked on its own.
+            if _unsealed(recipe, stored) or (
+                recipe.is_private and _unsealed(recipe, recipe.private_path())
+            ):
+                state += " plaintext"
             if recipe.is_private:
                 state += " +private" if recipe.private_path().is_file() else " no private half"
             if has_capture(recipe):
@@ -128,15 +170,18 @@ class Store:
             return state
         return "captured" if has_capture(recipe) else "no captures"
 
-    def undo_path(self, recipe: Recipe) -> Path:
+    def undo_path(self, app: App) -> Path:
         """A new undo copy's path, keyed on the package id.
 
         The folder name can be renamed or reused, but a restore copy has to stay
-        attributable, so the path uses the id the recipe declares.
+        attributable, so the path uses the id the app declares.
         """
+        recipe = app.recipe
+        if recipe is None:
+            raise StoreError(f"{app.package} has no screen walk, so no undo copy")
         stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         suffix = Path(recipe.artifact).suffix
-        base = self.state_root() / "ui" / recipe.package / f"{stamp}-pre-restore"
+        base = self.state_root() / "ui" / app.package / f"{stamp}-pre-restore"
         path = base.with_name(base.name + suffix)
         # A refused restore already wrote the copy for this second, and the
         # re-run with --force must not be blocked by the file the refusal made.
@@ -147,24 +192,78 @@ class Store:
         return path
 
 
+def app_files(apps: Path | str = DEFAULT_APPS, secrets: Path | str | None = None) -> list[Path]:
+    """Every app file, one per folder name, from the policy and private trees.
+
+    An app file in the private tree is plaintext policy. The default policy
+    tree pairs with the default private tree; a custom `apps` root with no
+    explicit `secrets` is self-contained, so a fixture does not inherit the
+    repository's private tree. A folder that exists in both trees is an error:
+    one of them would silently shadow the other.
+    """
+    store = Store(apps=apps, secrets=secrets)
+    root = store.data_root()
+    public = sorted(Path(store.apps).glob(f"*/{APP_FILE}"))
+    private: list[Path] = []
+    if secrets is not None or Path(store.apps).resolve() == Path(DEFAULT_APPS).resolve():
+        private = sorted(root.glob(f"*/{APP_FILE}")) if root.is_dir() else []
+    paths = sorted(public + private, key=lambda path: path.parent.name)
+    seen: dict[str, Path] = {}
+    for path in paths:
+        name = path.parent.name
+        other = seen.get(name)
+        if other is not None:
+            raise StoreError(
+                f"the app folder {name} exists in both trees: {other} and {path};"
+                " a private app file replaces the public one, so remove the duplicate"
+            )
+        seen[name] = path
+    return paths
+
+
+def _with_data(recipe: Recipe, directory: Path, data: Path) -> Recipe:
+    """Attach the app's own folder, export root and vault, without reading selectors.
+
+    `directory` is where a private artifact is committed beside the app file,
+    and `data` is the export root every other artifact lives in. For an app
+    file in the private tree the two are the same folder, so its artifact is
+    stored there too. The vault covers that root and decrypts on read, but
+    nothing is read here: `load` loads the selectors, so listing never touches
+    the keyring.
+    """
+    recipe.dir = directory
+    recipe.data_dir = data
+    recipe.vault = vault.Vault(root=data.parent)
+    recipe.blob_dir = recipe.dir if recipe.is_private else data
+    return recipe
+
+
+def _within(child: Path, parent: Path) -> bool:
+    """Whether `child` is `parent`, or sits inside it."""
+    relative = Path(os.path.relpath(child, parent))
+    return relative == Path(".") or (bool(relative.parts) and relative.parts[0] != "..")
+
+
 def _outside(root: Path, apps: Path, what: str) -> Path:
-    """Refuse a directory that contains, or sits inside, the recipe tree."""
-
-    def within(child: Path, parent: Path) -> bool:
-        relative = Path(os.path.relpath(child, parent))
-        return relative == Path(".") or (bool(relative.parts) and relative.parts[0] != "..")
-
-    if within(root, apps):
+    """Refuse a directory that contains, or sits inside, the policy tree."""
+    if _within(root, apps):
         raise StoreError(
-            f"the {what} {root} is inside the recipe tree {apps};"
+            f"the {what} {root} is inside the policy tree {apps};"
             " an export must not sit where a commit can publish it"
         )
-    if within(apps, root):
-        raise StoreError(
-            f"the {what} {root} contains the recipe tree {apps};"
-            " an export must not sit where a commit can publish it"
-        )
+    if _within(apps, root):
+        raise StoreError(f"the {what} {root} contains the policy tree {apps}")
     return root
+
+
+def _unsealed(recipe: Recipe, path: Path) -> bool:
+    """Whether a stored file the vault covers is not a SOPS envelope."""
+    if recipe.vault is None or not recipe.vault.covers(path) or not path.is_file():
+        return False
+    try:
+        return not vault.encrypted(path.read_bytes())
+    except OSError:
+        return False
 
 
 def has_capture(recipe: Recipe) -> bool:
@@ -180,7 +279,7 @@ def artifact_digest(recipe: Recipe, path: Path | None = None) -> str:
     Hashing the raw bytes would call every export drift, because apps stamp an
     export time into the file.
     """
-    body = (path or recipe.artifact_path()).read_bytes()
+    body = vault.read(recipe, path or recipe.artifact_path())
     return hashlib.sha256(artifacts.canonical(body, recipe.volatile, recipe.sort)).hexdigest()
 
 
@@ -197,7 +296,7 @@ def state_digest(recipe: Recipe, artifact: Path | None = None) -> str:
         raise StoreError(
             f"stored artifact (run `uiu backup --app {recipe.package}` first): {path} does not exist"
         )
-    body = path.read_bytes()
+    body = vault.read(recipe, path)
     if recipe.is_private:
         overlay = recipe.private_path()
         if not overlay.is_file():
@@ -205,7 +304,7 @@ def state_digest(recipe: Recipe, artifact: Path | None = None) -> str:
                 f"the private half {overlay} is missing; a backup writes it beside the artifact,"
                 " and without it the state cannot be compared or restored"
             )
-        body = split.merge_export(body, overlay.read_bytes(), recipe.private)
+        body = split.merge_export(body, vault.read(recipe, overlay), recipe.private)
     return hashlib.sha256(artifacts.canonical(body, recipe.volatile, recipe.sort)).hexdigest()
 
 

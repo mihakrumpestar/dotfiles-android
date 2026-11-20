@@ -1,6 +1,6 @@
 # Shared setup
 
-Apps, accounts and settings that both phones use. Debloat the stock phone first, see [Debloat](debloat.md).
+Apps and settings that both phones use. Debloat the stock phone first, see [Debloat](debloat.md).
 
 ## Apps
 
@@ -21,46 +21,30 @@ task install -- dev.imranr.obtainium
 task install -- dev.imranr.obtainium --dry-run
 ```
 
-An app is one directory under `policy/data`. Its `install.json` holds the package id and release facts: the release URL must be a `.../releases/latest` endpoint, `assets` maps an ABI to a release file with a `universal` fallback, `checksum` says where the digest comes from (`asset` for a publisher's `.sha256`, `digest` for the digest GitHub records), and `start` is optional. `steps.py` is optional and drives backup and restore. Adding an app is adding a directory; no shared code changes.
+An app is one directory under `policy/data`, holding one `app.py`. The file holds the package id, the release facts when it is installed from a release, the device state it needs, and its screen walks. The package id is written once, at the top.
 
-After Obtainium starts, open it and import your export from Settings.
+```python
+from uiu.dsl import app
 
-## Round Sync
+APP = app(
+    package="org.ironfoxoss.ironfox",
+    install={
+        "release": "https://api.github.com/repos/ironfox-oss/IronFox/releases/latest",
+        "checksum": "asset",
+        "assets": {"universal": "IronFox.apk"},
+    },
+    roles={"android.app.role.BROWSER": "IronFox is the browser"},
+    permissions={"android.permission.POST_NOTIFICATIONS": ("granted", "update notices")},
+)
+```
 
-Use the maintained [gulp79 fork](https://github.com/gulp79/Round-Sync) (`de.felixnuesse.extract`), not the unmaintained `newhinton/Round-Sync`. Grant storage permission before the first run; without `READ_EXTERNAL_STORAGE` it cannot see local storage.
+The release URL must be a `.../releases/latest` endpoint, `assets` maps an ABI to a release file with a `universal` fallback, `checksum` says where the digest comes from (`asset` for a publisher's `.sha256`, `digest` for the digest GitHub records), and `start` is optional. An app with no `install` arrives some other way. Adding an app is adding a directory; no shared code changes.
 
-## Accounts and pairing
-
-1. Pair KDE Connect.
-2. Restore Simple Contacts and Simple Messages. Turn on automatic backups for Contacts. Messages only has manual backup.
-3. IronFox: set it as the default browser, then add Dark Reader, I still don't care about cookies, and uBlock Origin.
-4. OsmAnd~: restore the backup and install the required maps.
-5. Shizuku-Next and ShizuCallRecorder:
-   - Run `task init` as above.
-   - Grant Shizuku the auto-start permission, enable Start on boot in Shizuku, and allow Background processes in its permissions page. Android 12 and later otherwise kills the server started at boot.
-
-     ```sh
-     adb shell pm grant moe.shizuku.privileged.api android.permission.WRITE_SECURE_SETTINGS
-     ```
-
-   - Grant ShizuCallRecorder its permissions and app op, then enable automatic recording for incoming and outgoing calls:
-
-     ```sh
-     adb shell pm grant com.kitsumed.shizucallrecorder android.permission.READ_CALL_LOG
-     adb shell pm grant com.kitsumed.shizucallrecorder android.permission.READ_PHONE_STATE
-     adb shell pm grant com.kitsumed.shizucallrecorder android.permission.READ_CONTACTS
-     adb shell pm grant com.kitsumed.shizucallrecorder android.permission.POST_NOTIFICATIONS
-     adb shell cmd appops set com.kitsumed.shizucallrecorder MANAGE_ONGOING_CALLS allow
-     ```
-
-## Backups
-
-- Keep pictures and downloads backed up.
-- Run Round Sync to copy new backups to the server.
+The app list comes back with `task ui-restore -- --app dev.imranr.obtainium`, and each app then installs from it.
 
 ## Settings
 
-`policy/profile.conf` holds device settings. `policy/apps.conf` holds per-app state. They are one declaration split by subject, and declaring the same key in both is an error. One snapshot covers both.
+`policy/profile.conf` holds device settings, and each app's own file holds what belongs to that app. They are one declaration split by subject, and declaring the same key twice is an error. One snapshot covers both.
 
 ```sh
 task apply            # dry run
@@ -68,6 +52,8 @@ task apply -- --yes   # write
 task verify           # report drift
 task revert           # restore the values captured before the last apply
 ```
+
+`task apply -- --yes` grants every permission, app op, role and doze entry declared across `policy/data/*/app.py` in one run with one snapshot, and enables the accessibility and notification-listener services named in `policy/profile.conf`.
 
 The section decides the store:
 
@@ -91,38 +77,109 @@ DeviceConfig rejects an unknown key loudly. The Settings provider accepts any ke
 
 An app's own preferences under `/data/data/<package>` need root, so a profile stops at platform-side state. Apps that keep files under `/sdcard/Android/data/<package>/` are the exception: adb can copy those directly, and that is how Obtainium's app list moves.
 
+## Steps no command can do
+
+These are the only things left by hand once per phone. Everything else is a command above, or a walk in the app's own file: `task ui-setup -- --app <package>` for in-app settings and `task ui-restore -- --app <package>` for a stored export.
+
+### Shizuku-Next
+
+Grant the auto-start permission, enable Start on boot in Shizuku, and allow Background processes in its permissions page. Android 12 and later otherwise kills the server started at boot. `WRITE_SECURE_SETTINGS` is an install permission, so `apply` cannot verify it:
+
+```sh
+adb shell pm grant moe.shizuku.privileged.api android.permission.WRITE_SECURE_SETTINGS
+```
+
+### Mindful
+
+Set the screen time limits and the bedtime.
+
+### MicroG
+
+Run the self-check.
+
+### Orbot
+
+Start it, and turn on VPN mode.
+
+### Aurora Store
+
+Tap **Anonymous** on the splash screen. The status moves through "Requesting new session" to "Verifying new session" and the app lands on its grid. Nothing is typed and no Google account is involved.
+
+### IronFox
+
+An add-on page is a GeckoView with no controls the engine can read, so the two extra add-ons are installed by hand. Open each link inside IronFox, tap **Add to Firefox**, then **Add**:
+
+- `https://addons.mozilla.org/android/addon/istilldontcareaboutcookies/`
+- `https://addons.mozilla.org/android/addon/darkreader/`
+
+They are listed under **Extensions**, in the `⋮` menu and in Settings, not under an "Add-ons" label. The switch that allows the installation, and Brave as the default search engine, are set by the app's setup walk.
+
+### OsmAnd
+
+Restore a `.osf` from the phone-sync folder: map screen > the bottom-left menu button > Settings > **Import/export** > **Import from file** > pick the `.osf` > tick the three rows on "Select the data to be imported." (**Continue** stays disabled until at least one is ticked) > **Continue** > **Replace all** > **Restart**.
+
+### Round Sync
+
+The config and the sync triggers come back with `task ui-restore -- --app de.felixnuesse.extract`. The stored zip is `secrets/roundsync/roundsync.zip` because `rclone.conf` inside it carries the WebDAV password. A phone that never saw the backup has the remote without that password until it is typed once in the app.
+
+## Backups
+
+- Keep pictures and downloads backed up.
+- Run Round Sync to copy new backups to the server.
+
 ## App settings through their own UI
 
-For app preferences, use the app's own export and import, driven by a recipe. Each app gets one folder:
+For app preferences, use the app's own export and import, driven by the walks in the app's own file:
 
 ```
-policy/data/<app>/steps.py                committed: how to drive the app
-policy/data/<app>/install.json            committed: release facts, when the app is installed here
+policy/data/<app>/app.py                  committed: package, install facts, device state, walks
 policy/data/<app>/<export>.json           committed: the export, sensitive values zeroed
-secrets/<app>/<export>.private.json       private: the values that were zeroed
+policy/data/<app>/<payload>.json          committed: a file the app imports, untouched
+secrets/<app>/<export>.private.json       private: the values that were zeroed, SOPS-encrypted
+secrets/<app>/<export>.zip                private: an export that cannot be split, SOPS-encrypted
 ```
 
-A recipe is a Python file. Each step is a function call, built with `uiu.dsl`:
+The walk is Python, built with `uiu.dsl`:
 
 ```python
-from uiu.dsl import key, launch, pull, recipe, tap, wait
+from uiu.dsl import app, ensure, key, launch, pull, push, tap, wait
 
-RECIPE = recipe(
+APP = app(
     package="com.example.demo",
     artifact="demo.json",
+    setup=[
+        push("demo-settings.json", "/sdcard/Download/demo-settings.json"),
+        launch("com.example.demo/.MainActivity", clear=True),
+        wait(text="Settings"),
+        tap(text="Settings"),
+        wait(text="Import from file"),
+        tap(text="Import from file"),
+        ensure(True, text="Show updates"),
+    ],
     backup=[
         key("KEYCODE_HOME"),
         launch("com.example.demo/.MainActivity", clear=True),
-        wait(desc="Settings"),
-        tap(desc="Settings"),
         pull("/sdcard/Download/demo.json", "{{artifact}}"),
+    ],
+    restore=[
+        push("{{artifact}}", "/sdcard/Download/demo.json"),
     ],
 )
 ```
 
-The module-level `RECIPE` is the whole contract. Selector arguments are `text`, `id`, `desc`, `text_contains`, `class_name` and `index`; `class_name` is the probe's `class`, renamed because Python reserves that word. A step that cannot run fails when the recipe loads, not halfway through a run.
+The module-level `APP` is the whole contract. Selector arguments are `text`, `id`, `desc`, `text_contains`, `class_name` and `index`; `class_name` is the probe's `class`, renamed because Python reserves that word. A step that cannot run fails when the app file loads, not halfway through a run.
 
-There are two trees because a recipe is policy anyone may read, while an export describes one person's phone. The folder name maps one tree to the other. The private tree is `--secrets`, `ANDROID_SECRETS_DIR`, or `./secrets`, in that order. It is its own git repository.
+There are two trees because most recipes are policy anyone may read, while an export describes one person's phone and some apps are themselves private. The folder name maps one tree to the other. The private tree is `--secrets`, `ANDROID_SECRETS_DIR`, or `./secrets`, in that order. It is its own git repository. An app that must not be public keeps its file there as `<app>/app.py`, plaintext because the repository is private; the store reads app files from both trees.
+
+Every export file in the private tree is a SOPS envelope encrypted to one age key, in SOPS's binary store so the plaintext returns byte for byte. App files and the selector list are policy, not export data, so they stay plaintext because the repository is private. `uiu` decrypts in memory on read and encrypts before writing, so a plaintext export never lands there. The age private key is the `SOPS_AGE_KEY` secret in `secretspec.toml`, which keeps it in the system keyring:
+
+```sh
+secretspec set SOPS_AGE_KEY    # once per machine
+```
+
+A missing key stops any command that needs an encrypted file, naming the file. `uiu list` reads no selectors, so it needs no key, and it appends `plaintext` to a stored export that is not a SOPS envelope. The keyring entry is the only copy, so back the age key up somewhere offline; `secrets/README.md` has the recovery and rotation commands.
+
+Some files stay plaintext on purpose: app files and selector lists, because they are policy and the repository is private; undo copies under `.state/ui/<package>/`, which hold the pre-restore export at 0600 and must not be synced or committed; and a verify or restore export in a temp directory until it is published.
 
 Two lists decide what happens to a value that must not be published:
 
@@ -147,21 +204,24 @@ A path may appear in one list or the other, never both. `private` needs a JSON e
 A plain path moves one value out. A path with an identity moves one list element out and leaves the others public. An identity that matches nothing fails, because publishing the entry it should hide is worse. A plain path the app may omit is only a warning. A path that would cross a list is refused; use an identity instead. Neither list covers a value whose path or shape changes with your data.
 
 ```sh
-task ui-list                                  # recipes and whether an export is stored
-task ui-backup -- --app eu.ottop.yamlauncher
+task ui-list                                  # app files and whether an export is stored
+task ui-setup -- --app com.aurora.store       # run the in-app setup walk
+task ui-backup -- --app eu.ottop.yamlauncher  # export and store
 task ui-verify -- --app eu.ottop.yamlauncher  # re-export and diff
-task ui-restore -- --app eu.ottop.yamlauncher
+task ui-restore -- --app eu.ottop.yamlauncher # push the stored export back
 ```
 
-The engine is `uiu`, run with `uv run uiu`; the `task ui-*` names call it. It drives the phone through uiautomator2, whose server runs as the shell user, so nothing is installed on the device. A step is one action: `launch`, `tap`, `type`, `clear`, `wait`, `key`, `scroll`, `sleep`, `pull`, `push`, `capture`, `assert`.
+The engine is `uiu`, run with `uv run uiu`; the `task ui-*` names call it. It drives the phone through uiautomator2, whose server runs as the shell user, so nothing is installed on the device. A step is one action: `launch`, `tap`, `type`, `clear`, `wait`, `key`, `scroll`, `sleep`, `pull`, `push`, `capture`, `assert`, `shell`, `ensure` and `if_absent`.
 
 Selectors match on `text`, `id`, `desc` or `textContains`, plus `index` for duplicates. They never use coordinates. A `type` without a selector writes into the field the previous step focused, which is the way into a search box with no label. `launch` with `"clear": true` stops the app first, so a run starts at the root screen. `pull` with `"newest": true` takes the newest match of a device glob. A pull waits for the file instead of a recipe sleeping first.
 
-The recipe's keys are `package`, `artifact`, `volatile`, `redact`, `private`, `sort`, `backup` and `restore`. Path lists are dotted and name the leaf, for example `data.locationRegion.value`. A list is walked in place, so `apps.lastUpdateCheck` reaches every element.
+Some steps exist because a run has to be safe to repeat. `ensure` taps a row only when its checked state differs. `if_absent` runs a block of steps only when its selector matches nothing, which is how a one-time item is created without creating a second copy. `wait` takes `checked` to wait on a switch, `absent` to wait for a dialog to go away, and `scroll` takes `until` to stop as soon as the target appears.
 
-Restore is guarded. It exports the current state first, compares it with the stored export and overlay, and stops if they match. When they differ it prints the diff, writes an undo copy under `.state/ui/<package>/`, and refuses without `--force`. After the import it exports again and prints `restored` only when the phone matches; otherwise it reports a failure with the undo copy's path. Apps with a lock or biometrics gate will block a recipe, so leave those off on a driven phone.
+Restore is guarded when the recipe has a backup. It exports the current state first, compares it with the stored export and overlay, and stops if they match. When they differ it prints the diff, writes an undo copy under `.state/ui/<package>/`, and refuses without `--force`. After the import it exports again and prints `restored` only when the phone matches; otherwise it reports a failure with the undo copy's path. A recipe with no backup has nothing to compare, so it pushes the stored file as it is. Apps with a lock or biometrics gate will block a recipe, so leave those off on a driven phone.
 
-Write a recipe by probing the screens, not by guessing:
+Two exports compare by content, not by bytes. A JSON export has its `volatile` fields masked and its `sort` lists ordered; a zip is compared member by member, ignoring the archive's own timestamps, so `task ui-verify` stays green for the apps whose export is an archive.
+
+Write a walk by probing the screens, not by guessing:
 
 ```sh
 task ui-probe -- --launch dev.imranr.obtainium/.MainActivity --clear \

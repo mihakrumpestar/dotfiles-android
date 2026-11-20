@@ -51,12 +51,12 @@ tasks:
       - "{{.ANDROIDCTL}} install {{.CLI_ARGS}}"
 
   apply:
-    desc: Apply profile.conf and apps.conf (dry run unless --yes is in CLI_ARGS)
+    desc: Apply profile.conf and every app file (dry run unless --yes is in CLI_ARGS)
     cmds:
       - "{{.ANDROIDCTL}} apply {{.CLI_ARGS}}"
 
   verify:
-    desc: Report drift between the device and both profiles
+    desc: Report drift between the device and the declared state
     cmds:
       - "{{.ANDROIDCTL}} verify {{.CLI_ARGS}}"
 
@@ -66,7 +66,7 @@ tasks:
       - "{{.ANDROIDCTL}} revert {{.CLI_ARGS}}"
 
   ui-list:
-    desc: List app backup recipes and whether an artifact is stored
+    desc: List app files and whether an artifact is stored
     cmds:
       - "{{.UIU}} list {{.CLI_ARGS}}"
 
@@ -74,6 +74,11 @@ tasks:
     desc: "Export an app's state through its own UI: task ui-backup -- --app <package>"
     cmds:
       - "{{.UIU}} backup {{.CLI_ARGS}}"
+
+  ui-setup:
+    desc: "Run an app's in-app setup walk: task ui-setup -- --app <package>"
+    cmds:
+      - "{{.UIU}} setup {{.CLI_ARGS}}"
 
   ui-restore:
     desc: "Restore a stored artifact, guarded: task ui-restore -- --app <package> [--force]"

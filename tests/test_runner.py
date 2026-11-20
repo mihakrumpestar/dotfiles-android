@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
 from pathlib import Path
 
 import pytest
-from support import VALID, FakeDevice, recipe_in, xml_node, xml_screen
+from support import ENVELOPE, VALID, FakeDevice, recipe_from, recipe_in, xml_node, xml_screen
 
-from uiu import artifacts
+from uiu import artifacts, runner, vault
 from uiu.device import ShellResult
 from uiu.recipe import Selector, Step
-from uiu.runner import Runner, StepError, export_paths, run
+from uiu.runner import Runner, StepError, export_paths, merge_file, run
+from uiu.vault import Vault, VaultError
 
 
 def test_a_wait_that_matched_pays_for_one_dump():
@@ -196,6 +198,226 @@ def test_push_refuses_when_the_private_half_is_missing(tmp_path):
 
     with pytest.raises(Exception, match="needs it beside the artifact"):
         worker._push(Step(kind="push", source="demo.json", target="/sdcard/Download/demo.json"))
+
+
+def test_push_sends_the_artifact_from_the_export_root(tmp_path):
+    app_dir = tmp_path / "apps" / "demo"
+    app_dir.mkdir(parents=True)
+    export = tmp_path / "secrets" / "demo"
+    export.mkdir(parents=True)
+    (export / "demo.json").write_bytes(b'{"keep": 1}')
+    recipe = recipe_in(app_dir)
+    recipe.blob_dir = export
+    fake = FakeDevice(xml_screen(xml_node(text="x")))
+    worker = Runner(fake, recipe)
+
+    worker._push(Step(kind="push", source="demo.json", target="/sdcard/Download/demo.json"))
+
+    assert fake.pushes == [(export / "demo.json", "/sdcard/Download/demo.json")]
+
+
+def test_push_stages_a_covered_artifact_as_plaintext(tmp_path):
+    export = tmp_path / "secrets" / "demo"
+    export.mkdir(parents=True)
+    (export / "demo.json").write_bytes(ENVELOPE)
+    recipe = recipe_from(VALID)
+    recipe.dir = tmp_path / "apps" / "demo"
+    recipe.blob_dir = export
+    recipe.vault = Vault(
+        export.parent,
+        identity=lambda: "AGE-SECRET-KEY-1",
+        run=lambda argv, body: b'{"keep": 1}',
+    )
+    fake = FakeDevice(xml_screen(xml_node(text="x")))
+    worker = Runner(fake, recipe)
+    run_dir = tmp_path / "run"
+    worker.tmp = run_dir
+    run_dir.mkdir()
+
+    worker._push(Step(kind="push", source="demo.json", target="/sdcard/Download/demo.json"))
+
+    assert fake.pushed == [("/sdcard/Download/demo.json", b'{"keep": 1}')]
+    staged = fake.pushes[0][0]
+    assert staged.parent == run_dir
+    assert stat.S_IMODE(staged.stat().st_mode) == 0o600
+
+
+def test_publish_writes_envelopes_into_the_private_tree(tmp_path):
+    recipe = recipe_in(tmp_path, {**VALID, "private": ["settings.token"]})
+    bodies: list[bytes] = []
+    destinations: list[str] = []
+    pending: list[bytes] = []
+
+    def run(argv, body):
+        # `vault.write` opens every envelope it makes, so the seam answers the
+        # decrypt call with the body it just encrypted.
+        if argv[0] == "decrypt":
+            return pending[-1]
+        pending.append(body)
+        bodies.append(body)
+        destinations.append(argv[-2])
+        return ENVELOPE
+
+    recipe.vault = Vault(tmp_path, identity=lambda: "AGE-SECRET-KEY-1", run=run)
+    worker = Runner(FakeDevice(xml_screen(xml_node(text="x"))), recipe)
+    public = artifacts.dumps({"settings": {"token": ""}})
+    private = artifacts.dumps({"settings": {"token": "secret"}})
+
+    worker.publish(recipe.artifact_path(), public, private)
+
+    assert vault.encrypted(recipe.artifact_path().read_bytes())
+    assert vault.encrypted(recipe.private_path().read_bytes())
+    assert bodies == [public, private]
+    assert destinations == [str(recipe.artifact_path()), str(recipe.private_path())]
+
+
+def test_publish_renames_the_overlay_before_the_artifact(tmp_path, monkeypatch):
+    recipe = recipe_in(tmp_path, {**VALID, "private": ["settings.token"]})
+    pending: list[bytes] = []
+
+    def run(argv, body):
+        if argv[0] == "decrypt":
+            return pending[-1]
+        pending.append(body)
+        return ENVELOPE
+
+    recipe.vault = Vault(tmp_path, identity=lambda: "AGE-SECRET-KEY-1", run=run)
+    worker = Runner(FakeDevice(xml_screen(xml_node(text="x"))), recipe)
+    replaced: list[Path] = []
+    overlay_seen: list[bytes] = []
+    real = os.replace
+
+    def replace(source, target):
+        replaced.append(Path(target))
+        if Path(target) == recipe.artifact_path():
+            # The artifact rename must not be the first time a reader can see
+            # the pair: the overlay is already in place when it happens.
+            overlay_seen.append(recipe.private_path().read_bytes())
+        real(source, target)
+
+    monkeypatch.setattr(runner.os, "replace", replace)
+
+    worker.publish(
+        recipe.artifact_path(),
+        artifacts.dumps({"settings": {"token": ""}}),
+        artifacts.dumps({"settings": {"token": "secret"}}),
+    )
+
+    assert replaced == [recipe.private_path(), recipe.artifact_path()]
+    assert overlay_seen == [ENVELOPE]
+    assert vault.encrypted(recipe.artifact_path().read_bytes())
+
+
+def test_a_failed_overlay_encryption_leaves_the_pair_untouched(tmp_path):
+    app_dir = tmp_path / "apps" / "demo"
+    app_dir.mkdir(parents=True)
+    export = tmp_path / "secrets" / "demo"
+    export.mkdir(parents=True)
+    recipe = recipe_from({**VALID, "private": ["settings.token"]})
+    recipe.dir = app_dir
+    recipe.data_dir = export
+    recipe.blob_dir = app_dir
+    final = recipe.artifact_path()
+    overlay = recipe.private_path()
+    final.write_bytes(b"old artifact")
+    overlay.write_bytes(b"old overlay")
+
+    def run(argv, body):
+        if str(argv[-2]) == str(overlay):
+            raise VaultError("no identity matched any of the recipients")
+        return ENVELOPE
+
+    recipe.vault = Vault(export.parent, identity=lambda: "AGE-SECRET-KEY-1", run=run)
+    worker = Runner(FakeDevice(xml_screen(xml_node(text="x"))), recipe)
+
+    with pytest.raises(VaultError, match="no identity matched"):
+        worker.publish(final, b"new artifact", b"new overlay")
+
+    assert final.read_bytes() == b"old artifact"
+    assert overlay.read_bytes() == b"old overlay"
+    assert sorted(entry.name for entry in tmp_path.rglob("*.tmp")) == []
+
+
+def test_merge_file_decrypts_both_halves(tmp_path):
+    recipe = recipe_in(tmp_path, {**VALID, "private": ["apps[id=bank]"]})
+    public = artifacts.dumps({"apps": [{"id": "a"}, {"id": "bank", "name": "B"}]})
+    private = artifacts.dumps({"apps": [{"id": "bank", "name": "B"}]})
+    (tmp_path / "demo.json").write_bytes(ENVELOPE)
+    (tmp_path / "demo.private.json").write_bytes(ENVELOPE)
+
+    def run(argv, body):
+        return private if str(argv[-1]).endswith(".private.json") else public
+
+    recipe.vault = Vault(tmp_path, identity=lambda: "AGE-SECRET-KEY-1", run=run)
+
+    assert json.loads(merge_file(recipe)) == {"apps": [{"id": "a"}, {"id": "bank", "name": "B"}]}
+
+
+def test_capture_writes_an_envelope_into_the_private_tree(tmp_path):
+    export = tmp_path / "secrets" / "demo"
+    recipe = recipe_from(VALID)
+    recipe.dir = tmp_path / "apps" / "demo"
+    recipe.data_dir = export
+    recipe.blob_dir = export
+    bodies: list[bytes] = []
+    pending: list[bytes] = []
+
+    def run(argv, body):
+        # The envelope is opened again by `vault.write`, so a decrypt answers
+        # with the plaintext that went in.
+        if argv[0] == "decrypt":
+            return pending[-1]
+        pending.append(body)
+        bodies.append(body)
+        return ENVELOPE
+
+    recipe.vault = Vault(export.parent, identity=lambda: "AGE-SECRET-KEY-1", run=run)
+    worker = Runner(FakeDevice(xml_screen(xml_node(text="Home"))), recipe)
+
+    worker._capture(Step(kind="capture", name="home"))
+
+    path = export / "demo.d" / "home.xml"
+    assert vault.encrypted(path.read_bytes())
+    assert bodies and bodies[0].startswith(b"<hierarchy")
+    assert sorted(entry.name for entry in path.parent.iterdir()) == ["home.xml"]
+
+
+def test_push_sends_a_payload_from_beside_the_app_file(tmp_path):
+    app_dir = tmp_path / "apps" / "demo"
+    app_dir.mkdir(parents=True)
+    (app_dir / "payload.json").write_bytes(b'{"keep": 1}')
+    export = tmp_path / "secrets" / "demo"
+    export.mkdir(parents=True)
+    recipe = recipe_from(
+        {
+            "package": "com.example.demo",
+            "setup": [{"push": {"from": "payload.json", "to": "/sdcard/Download/payload.json"}}],
+        }
+    )
+    recipe.dir = app_dir
+    recipe.blob_dir = export
+    fake = FakeDevice(xml_screen(xml_node(text="x")))
+    worker = Runner(fake, recipe)
+
+    worker._push(Step(kind="push", source="payload.json", target="/sdcard/Download/payload.json"))
+
+    assert fake.pushes == [(app_dir / "payload.json", "/sdcard/Download/payload.json")]
+
+
+def test_push_of_a_payload_ignores_a_private_recipe_overlay(tmp_path):
+    app_dir = tmp_path / "apps" / "demo"
+    app_dir.mkdir(parents=True)
+    (app_dir / "payload.json").write_bytes(b'{"keep": 1}')
+    recipe = recipe_from({**VALID, "private": ["settings.token"]})
+    recipe.dir = app_dir
+    recipe.blob_dir = app_dir
+    fake = FakeDevice(xml_screen(xml_node(text="x")))
+    worker = Runner(fake, recipe)
+
+    # No overlay exists here, so a merge attempt would fail instead of pushing.
+    worker._push(Step(kind="push", source="payload.json", target="/sdcard/Download/payload.json"))
+
+    assert fake.pushes == [(app_dir / "payload.json", "/sdcard/Download/payload.json")]
 
 
 def test_scroll_is_a_swipe_of_the_screen_height():

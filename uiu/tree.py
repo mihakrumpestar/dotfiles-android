@@ -162,16 +162,29 @@ def _smallest(nodes: list[Node], predicate, x: int, y: int) -> Node | None:
 
 
 def _same_row_switch(nodes: list[Node], label: Node) -> Node | None:
-    _, y = label.bounds.centre
+    """A checkable control in the label's row, to its left or right.
+
+    The vertical test is overlap, not the label's centre: a two-line row puts the
+    switch beside the title and its summary, so its top can start below the
+    title's centre. A radio row puts its control to the left of the label, a
+    switch row to the right, and the nearest one wins.
+    """
     best, best_distance = None, 0
     for node in nodes:
         if not node.checkable or node.bounds.empty:
             continue
-        if y < node.bounds.y1 or y > node.bounds.y2:
+        # Strict overlap: a control whose edge only touches the label's edge is
+        # in the row above or below it.
+        if node.bounds.y2 <= label.bounds.y1 or node.bounds.y1 >= label.bounds.y2:
             continue
-        if node.bounds.x1 < label.bounds.x2:
+        if node.bounds.x1 >= label.bounds.x2:
+            distance = node.bounds.x1 - label.bounds.x2
+        elif node.bounds.x2 <= label.bounds.x1:
+            distance = label.bounds.x1 - node.bounds.x2
+        else:
+            # Horizontally overlapping the label means the control is part of
+            # it, which the smallest-checkable rule already covers.
             continue
-        distance = node.bounds.x1 - label.bounds.x2
         if best is None or distance < best_distance:
             best, best_distance = node, distance
     return best

@@ -1,12 +1,13 @@
-"""Yam Launcher: export and import its settings through the launcher's clock button."""
+"""Yam Launcher: the home screen, and the role that makes it one."""
 
-from uiu.dsl import key, pull, push, recipe, scroll, sleep, tap, type_text, wait
+from uiu.dsl import app, key, pull, push, scroll, sleep, tap, type_text, wait
 
-RECIPE = recipe(
+APP = app(
     package="eu.ottop.yamlauncher",
+    roles={
+        "android.app.role.HOME": "Yam Launcher is the home screen",
+    },
     artifact="yamlauncher.json",
-    volatile=["created_at"],
-    private=["data.location.value", "data.locationRegion.value"],
     backup=[
         key("KEYCODE_HOME"),
         wait(id="eu.ottop.yamlauncher:id/textClock"),
@@ -42,4 +43,6 @@ RECIPE = recipe(
         tap(id="android:id/title", text_contains="{{artifact}}"),
         sleep(3),
     ],
+    volatile=["created_at"],
+    private=["data.location.value", "data.locationRegion.value"],
 )

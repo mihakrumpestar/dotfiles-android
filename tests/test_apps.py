@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Self
 
 import pytest
-from support import REPO, VALID, steps_file
+from support import REPO, VALID, app_file
 
 from androidctl import apps
 from androidctl.apps import (
@@ -30,6 +30,7 @@ from androidctl.apps import (
     latest_release,
     load,
 )
+from uiu.spec import parse as parse_app
 
 ORIGIN = "https://example.invalid"
 APK_NAME = "app-arm64-v8a-release.apk"
@@ -49,12 +50,10 @@ SPEC = AppSpec(
 )
 
 GOOD = {
-    "package": "com.example.demo",
     "release": "https://example.invalid/releases/latest",
     "checksum": "asset",
     "assets": {"universal": "app.apk"},
 }
-NO_PACKAGE = {key: value for key, value in GOOD.items() if key != "package"}
 NO_CHECKSUM = {key: value for key, value in GOOD.items() if key != "checksum"}
 
 
@@ -152,17 +151,23 @@ def make_app(
     root: Path,
     name: str = "demo",
     *,
+    package: str = "com.example.demo",
     install: object = None,
     steps: bool = True,
 ) -> Path:
-    """One app directory: an install spec, and optionally a recipe beside it."""
+    """One app directory: `app.py` carrying the install facts and the walk."""
+    body: dict = {"package": package, "install": install}
+    if steps:
+        body.update(
+            {
+                "artifact": "demo.json",
+                "backup": VALID["backup"],
+                "restore": VALID["restore"],
+            }
+        )
     directory = root / name
     directory.mkdir(parents=True)
-    if install is not None:
-        text = install if isinstance(install, str) else json.dumps(install)
-        (directory / "install.json").write_text(text)
-    if steps:
-        (directory / "steps.py").write_text(steps_file())
+    (directory / "app.py").write_text(app_file(body))
     return directory
 
 
@@ -187,29 +192,24 @@ def test_the_committed_shizuku_install_spec_loads() -> None:
     assert spec.checksum == "digest"
     assert spec.assets["universal"] == "shizuku-next.apk"
     assert spec.start == StartSpec("libshizuku.so", "shizuku_server")
-    assert not (REPO / "policy/data/shizuku/steps.py").exists()
+    assert parse_app(REPO / "policy/data/shizuku/app.py").recipe is None
 
 
 def test_a_second_app_is_added_without_touching_shared_code(tmp_path: Path) -> None:
     for name in ("alpha", "beta"):
-        directory = tmp_path / name
-        directory.mkdir()
-        (directory / "steps.py").write_text(
-            steps_file({**VALID, "package": f"com.example.{name}", "artifact": f"{name}.json"})
-        )
-        (directory / "install.json").write_text(
-            json.dumps(
-                {
-                    "package": f"com.example.{name}",
-                    "checksum": "asset",
-                    "release": "https://example.invalid/releases/latest",
-                    "assets": {
-                        "arm64-v8a": f"{name}-arm64.apk",
-                        "universal": f"{name}.apk",
-                    },
-                    "hint": f"open {name}",
-                }
-            )
+        make_app(
+            tmp_path,
+            name,
+            package=f"com.example.{name}",
+            install={
+                "checksum": "asset",
+                "release": "https://example.invalid/releases/latest",
+                "assets": {
+                    "arm64-v8a": f"{name}-arm64.apk",
+                    "universal": f"{name}.apk",
+                },
+                "hint": f"open {name}",
+            },
         )
 
     alpha = load("com.example.alpha", tmp_path)
@@ -235,10 +235,27 @@ def test_an_install_only_app_needs_no_recipe(tmp_path: Path) -> None:
     assert spec.package == "com.example.demo"
 
 
-def test_load_refuses_a_recipe_that_names_another_package(tmp_path: Path) -> None:
-    make_app(tmp_path, install=spec_body(package="com.example.other"))
-    with pytest.raises(AppError, match="install.json names com.example.other"):
-        load("com.example.other", tmp_path)
+def test_an_app_file_in_the_private_tree_is_found(tmp_path: Path) -> None:
+    secrets = tmp_path / "secrets"
+    make_app(secrets, "hidden", package="com.example.hidden", install=spec_body(), steps=False)
+
+    spec = load("com.example.hidden", tmp_path / "apps", secrets)
+
+    assert spec.name == "hidden"
+    assert spec.package == "com.example.hidden"
+
+
+def test_an_app_without_install_facts_is_not_offered(tmp_path: Path) -> None:
+    make_app(tmp_path, package="com.example.demo")
+    with pytest.raises(AppError, match="no app file declares an install"):
+        load("com.example.demo", tmp_path)
+
+
+@pytest.mark.parametrize("package", ["nope", "com.example/app", "com.example."])
+def test_load_refuses_an_app_file_with_a_bad_package(tmp_path: Path, package: str) -> None:
+    make_app(tmp_path, package=package, install=spec_body())
+    with pytest.raises(AppError, match="Android package id"):
+        load("com.example.demo", tmp_path)
 
 
 @pytest.mark.parametrize("package", ["../x", "nope"])
@@ -257,17 +274,14 @@ def test_load_rejects_a_folder_that_is_not_an_app_name(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("install", "match"),
     [
-        (NO_PACKAGE, '"package" is a package id'),
-        (spec_body(package="nope"), '"package" is a package id'),
-        (spec_body(package=1), '"package" is a package id'),
+        ({}, '"release" is an https URL'),
         (NO_CHECKSUM, '"checksum" is'),
         (spec_body(checksum="sha1"), '"checksum" is'),
         (spec_body(start="x"), '"start" is an object'),
         (spec_body(start={"library": "libx.so", "process": "x", "extra": "y"}), "unknown start"),
         (spec_body(start={"library": "../libx.so", "process": "x"}), '"library"'),
         (spec_body(start={"library": "libx.so", "process": "x y"}), '"process"'),
-        ("{", "not JSON"),
-        ("[]", "not an object"),
+        ([], "install is an object"),
         (spec_body(nope=1), 'unknown field "nope"'),
         (spec_body(release="http://x/releases/latest"), "https URL"),
         (

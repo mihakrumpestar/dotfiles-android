@@ -1312,6 +1312,8 @@
  "settings": {
   "autoExportOnChanges": true,
   "beforeNewInstallsShareToAppVerifier": false,
+  "bgGuardOnWiFi": "checksAndUpdates",
+  "bgGuardWhileCharging": "checksAndUpdates",
   "bgUpdatesOnWiFiOnly": true,
   "bgUpdatesWhileChargingOnly": true,
   "buryNonInstalled": true,
@@ -1320,7 +1322,7 @@
   "checkUpdateOnDetailPage": false,
   "exportDir": "content://com.android.externalstorage.documents/tree/primary%3Aphone-sync%2Fconfigs",
   "exportInstalledOnly": false,
-  "exportSettings": 1,
+  "exportSettings": 2,
   "firstRun": false,
   "googleVerificationWarningShown": true,
   "hideAPKOriginWarning": true,
@@ -1329,6 +1331,7 @@
   "huaweiAppGallery-session": "",
   "installMethod": "shizuku",
   "lastCompletedBGCheckTime": 1783711652415,
+  "minimumUpdateAgeDays": 7,
   "onlyCheckInstalledOrTrackOnlyApps": true,
   "parallelDownloads": true,
   "searchDeselected": [

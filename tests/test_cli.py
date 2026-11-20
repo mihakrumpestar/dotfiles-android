@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from support import steps_file
+from support import app_file
 
 from uiu import cli
 
@@ -13,7 +13,7 @@ def make_tree(tmp_path):
     secrets = tmp_path / "secrets"
     secrets.mkdir()
     (apps / "demo").mkdir(parents=True)
-    (apps / "demo" / "steps.py").write_text(steps_file())
+    (apps / "demo" / "app.py").write_text(app_file())
     return apps, secrets
 
 
@@ -61,3 +61,21 @@ def test_main_requires_an_action():
     with pytest.raises(SystemExit) as exit:
         cli.build_parser().parse_args([])
     assert exit.value.code == 2
+
+
+def test_setup_reaches_the_command(tmp_path, monkeypatch):
+    apps, secrets = make_tree(tmp_path)
+    seen = []
+
+    def fake_setup(store, package, serial, out=None, trace=False, device=None):
+        seen.append((store.apps, package, serial, trace))
+        return 0
+
+    monkeypatch.setattr(cli.commands, "setup", fake_setup)
+
+    code = cli.main(
+        ["setup", "--app", "com.example.demo", "--apps", str(apps), "--secrets", str(secrets)]
+    )
+
+    assert code == 0
+    assert seen == [(apps, "com.example.demo", None, False)]

@@ -3,7 +3,11 @@ name = "uiu"
 version = "0.1.0"
 description = "Replay declarative Android UI recipes through uiautomator2"
 requires-python = ">=3.13"
-dependencies = ["uiautomator2>=3.2"]
+dependencies = [
+    "uiautomator2>=3.2",
+    "adbutils>=2.12",
+    "secretspec>=0.21",
+]
 
 [project.scripts]
 uiu = "uiu.cli:main"

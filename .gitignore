@@ -2,18 +2,8 @@
 # a cached app rating list. Never commit it.
 .state/
 
-# This is the private export tree, a separate repository checked out inside this
-# one. Ignored in full, so none of its files reach the public repository.
-/secrets/
 
-# An export is one phone's data on one day, not policy: it names the apps someone
-# runs, which a public repository should not carry. Exports live in the private
-# android-secrets tree. Here only a recipe (steps.py) and a public artifact may
-# stay, and an artifact counts as public only when its recipe names the fields
-# that `private` removes. The tests check that.
-/policy/data/*/*
-!/policy/data/*/steps.py
-!/policy/data/*/*.json
+/secrets/
 
 # The devenv shell installs its tools and caches here.
 .devenv/

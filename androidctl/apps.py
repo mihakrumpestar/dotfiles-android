@@ -1,8 +1,10 @@
 """Install an app from its release, verified against a recorded checksum.
 
-An app is one directory under `policy/data`. Its `install.json` carries the
-package id, the release URL, the checksum source, one asset per ABI and an
-optional starter. `steps.py` beside it is optional and drives `uiu`.
+An app is one directory under `policy/data`, or under the private tree when the
+app itself must not be public. Its `app.py` carries the package id, and
+optionally the release URL, the checksum source, one asset per ABI and a
+starter, under `install=`. The same file holds the app's device state and its
+screen walk, so an install and a restore cannot disagree about the app.
 
 Every install resolves the current release, so the URL must point at the latest
 release endpoint: a pinned tag would go stale.
@@ -27,10 +29,10 @@ from urllib.error import HTTPError
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
-from uiu.recipe import STEPS_FILE, RecipeError, parse, valid_package
-from uiu.store import DEFAULT_APPS
+from uiu.recipe import RecipeError, valid_package
+from uiu.spec import App, parse
+from uiu.store import DEFAULT_APPS, StoreError, app_files
 
-INSTALL_FILE = "install.json"
 UNIVERSAL = "universal"
 
 # A stalled connection must fail instead of hanging a bootstrap.
@@ -39,7 +41,7 @@ TIMEOUT = 120
 # Read and hash in chunks so an APK never has to fit in memory.
 CHUNK = 64 * 1024
 
-_KEYS = ("assets", "checksum", "hint", "package", "release", "start")
+_KEYS = ("assets", "checksum", "hint", "release", "start")
 _START_KEYS = ("library", "process")
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 _BARE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -103,62 +105,57 @@ class Release:
         return self.find(apk.name + ".sha256")
 
 
-def load(package: str, apps: Path | str = DEFAULT_APPS) -> AppSpec:
-    """Resolve an app by package id, reading its install spec."""
+def load(
+    package: str, apps: Path | str = DEFAULT_APPS, secrets: Path | str | None = None
+) -> AppSpec:
+    """Resolve an app by package id, reading its app file."""
     if not valid_package(package):
         raise AppError(f'not a package name: "{package}"')
 
+    try:
+        paths = app_files(apps, secrets)
+    except StoreError as error:
+        raise AppError(str(error)) from error
     specs: list[AppSpec] = []
-    for path in sorted(Path(apps).glob(f"*/{INSTALL_FILE}")):
-        specs.append(_read(path))
+    for path in paths:
+        app = _app(path)
+        if app.install is None:
+            # An app with no release facts is installed some other way, such as
+            # the Play Store, so it cannot answer `task install`.
+            continue
+        specs.append(_spec(path, app))
 
     matching = [spec for spec in specs if spec.package == package]
     if not matching:
-        raise AppError(f'no install spec declares package "{package}" under {apps}')
+        raise AppError(
+            f'no app file declares an install for "{package}" in the policy or private tree'
+        )
     if len(matching) > 1:
         names = ", ".join(str(spec.name) for spec in matching)
-        raise AppError(f'package "{package}" is declared by more than one install spec: {names}')
+        raise AppError(f'package "{package}" is declared by more than one app file: {names}')
     return matching[0]
 
 
-def _read(path: Path) -> AppSpec:
-    name = path.parent.name
+def _app(path: Path) -> App:
+    """Read one app file, turning its parse error into an install error."""
+    try:
+        return parse(path)
+    except RecipeError as error:
+        raise AppError(str(error)) from error
+
+
+def _spec(path: Path, app: App) -> AppSpec:
+    """Validate one app's install facts into an install spec."""
+    name = app.name
     if not _NAME_RE.match(name):
         raise AppError(
             f'{path}: folder "{name}" is not a normalized app name;'
             " use lowercase letters, digits, dot, dash or underscore"
         )
-    try:
-        body = path.read_text(encoding="utf-8")
-    except UnicodeDecodeError as error:
-        raise AppError(f"reading {path}: {error}") from error
-    except OSError as error:
-        raise AppError(f"reading {path}: {error}") from error
-    try:
-        raw: Any = json.loads(body)
-    except ValueError as error:
-        raise AppError(f"{path}: not JSON: {error}") from error
-    if not isinstance(raw, dict):
-        raise AppError(f"{path}: not an object")
-    payload: dict[str, Any] = raw
+    payload: dict[str, Any] = app.install or {}
     for key in payload:
         if key not in _KEYS:
-            raise AppError(f'{path}: unknown field "{key}"')
-
-    package = payload.get("package")
-    if not isinstance(package, str) or not valid_package(package):
-        raise AppError(f'{path}: "package" is a package id')
-
-    steps = path.parent / STEPS_FILE
-    if steps.exists():
-        try:
-            recipe = parse(steps)
-        except RecipeError as error:
-            raise AppError(str(error)) from error
-        if recipe.package != package:
-            raise AppError(
-                f"{path}: install.json names {package} but {steps} names {recipe.package}"
-            )
+            raise AppError(f'{path}: unknown install field "{key}"')
 
     release = payload.get("release")
     if not isinstance(release, str) or not release.startswith("https://"):
@@ -192,7 +189,7 @@ def _read(path: Path) -> AppSpec:
     start = _start(path, payload.get("start"))
     return AppSpec(
         name=name,
-        package=package,
+        package=app.package,
         release=release,
         assets=assets,
         checksum=checksum,

@@ -1,4 +1,4 @@
-"""The five commands: list, probe, backup, verify, restore.
+"""The six commands: list, probe, backup, setup, verify, restore.
 
 Two rules live here. Every command that touches the device unlocks it first, and
 every recipe run that fails prints the screen it failed on, because the next
@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TextIO
 
-from . import artifacts, runner
+from . import artifacts, runner, vault
 from . import store as stores
 from .device import Device, DeviceError, UiDevice
 from .recipe import (
@@ -27,11 +27,23 @@ from .recipe import (
     parse_step,
     validate_step,
 )
+from .spec import App
 from .tree import Selector, TreeError, probe_rows, render_probe, unlabelled_clickable
 
 
 class CommandError(RuntimeError):
     """A command that could not do what it was asked, with nothing left to try."""
+
+
+def _recipe_for(app: App) -> Recipe:
+    """The app's screen walk, refused when it has none.
+
+    A policy-only app has no backup or restore, so a UI command naming it is a
+    mistake worth one line rather than a None-shaped crash.
+    """
+    if app.recipe is None:
+        raise CommandError(f"{app.package} has no screen walk: nothing to back up or restore")
+    return app.recipe
 
 
 def _format_chain(chain: Sequence[tuple[str, str]]) -> list[Selector | Step]:
@@ -82,14 +94,15 @@ def _device(serial: str | None, device: UiDevice | None = None) -> UiDevice:
 def list_recipes(store: stores.Store, out: TextIO | None = None) -> int:
     """List every recipe: what it declares, and what is stored for it.
 
-    It reads only the tree, so it answers without a device.
+    It reads only the tree, so it answers without a device and without the key:
+    the private selectors are loaded by `Store.load`, which a run needs.
     """
     out = out or sys.stdout
-    recipes, errors = store.all()
-    for recipe in recipes:
-        artifact = recipe.artifact or "-"
+    apps, errors = store.all()
+    for app in apps:
+        artifact = (app.recipe.artifact if app.recipe else "") or "-"
         print(
-            f"{recipe.name:<24} {recipe.package:<32} {artifact:<20} {store.state_of(recipe)}",
+            f"{app.name:<24} {app.package:<32} {artifact:<20} {store.state_of(app)}",
             file=out,
         )
     root = store.data_root()
@@ -179,7 +192,12 @@ def backup(
 ) -> int:
     """Run a recipe's backup steps and report the artifact's digest."""
     stream: TextIO = out or sys.stdout
-    recipe = store.load(package)
+    app = store.load(package)
+    recipe = _recipe_for(app)
+    if not recipe.backup:
+        # A push-only recipe has a restore but nothing to export, so a backup of
+        # it would run no steps and leave the stored file untouched.
+        raise CommandError(f"{package} has no backup flow")
     target = _device(serial, device)
 
     if not recipe.artifact:
@@ -207,6 +225,31 @@ def backup(
     return 0
 
 
+def setup(
+    store: stores.Store,
+    package: str,
+    serial: str | None,
+    out: TextIO | None = None,
+    trace: bool = False,
+    device: UiDevice | None = None,
+) -> int:
+    """Run a recipe's setup steps against the app.
+
+    A setup walk flips in-app state that has no export to compare, such as a
+    toggle or an imported config. It runs its steps and verifies itself through
+    `assert_checked`, so it needs no artifact, no digest and no undo copy.
+    """
+    stream: TextIO = out or sys.stdout
+    app = store.load(package)
+    recipe = _recipe_for(app)
+    if not recipe.setup:
+        raise CommandError(f"{package} has no setup walk")
+    target = _device(serial, device)
+    _run(target, recipe, recipe.setup, stream, trace)
+    print(f"setup {package} ({len(recipe.setup)} steps)", file=stream)
+    return 0
+
+
 def verify(
     store: stores.Store,
     package: str,
@@ -222,7 +265,8 @@ def verify(
     prints what differed and raises, because a shell script must see it.
     """
     stream: TextIO = out or sys.stdout
-    recipe = store.load(package)
+    app = store.load(package)
+    recipe = _recipe_for(app)
     if not recipe.artifact:
         raise CommandError(f"{package} is capture-only: there is no artifact to verify")
     target = _device(serial, device)
@@ -268,16 +312,30 @@ def restore(
     The phone is exported first and compared with the stored state. A difference
     is saved as an undo copy and refused unless `force` is set, so a restore
     cannot silently discard a value the recipe never exported.
+
+    A recipe with no backup steps has no export to compare against, so it skips
+    the guard and pushes the stored file as it is.
     """
     stream: TextIO = out or sys.stdout
-    recipe = store.load(package)
+    app = store.load(package)
+    recipe = _recipe_for(app)
     if not recipe.artifact or not recipe.restore:
         raise CommandError(f"{package} has no restore flow")
+    stored = recipe.artifact_path()
+    if not recipe.backup:
+        # There is no export, so the stored file is the only state there is:
+        # nothing to compare it with and nothing to save as an undo copy.
+        if not stored.is_file():
+            raise CommandError(f"stored artifact {stored} does not exist")
+        target = _device(serial, device)
+        print(f"restoring {package} from {stored} (no export to compare against)", file=stream)
+        _run(target, recipe, recipe.restore, stream, trace)
+        print(f"restored {package} from {stored}", file=stream)
+        return 0
     target = _device(serial, device)
 
     want_state = stores.state_digest(recipe)
     want_public = stores.artifact_digest(recipe)
-    stored = recipe.artifact_path()
     got_state, path, temp, cleanup = export_temp(target, recipe, stream, trace)
     try:
         got_public = stores.artifact_digest(temp, path)
@@ -293,7 +351,7 @@ def restore(
             print(f"drift    {package} stored {want_public}, device {got_public}", file=stream)
             print(diff_artifacts(recipe, path), file=stream, end="")
 
-        undo = store.undo_path(recipe)
+        undo = store.undo_path(app)
         # The undo copy is the whole export, private entries included. Copying
         # the split artifact would leave a file that cannot put them back.
         stores.write_new_file(undo, runner.merge_file(temp))
@@ -333,6 +391,7 @@ def export_temp(
     wrote itself.
     """
     directory = Path(tempfile.mkdtemp(prefix="uiu-verify-"))
+    complete = False
 
     def cleanup() -> None:
         shutil.rmtree(directory, ignore_errors=True)
@@ -342,10 +401,14 @@ def export_temp(
         _run(device, temp, temp.backup, out, trace)
         path = temp.artifact_path()
         digest = stores.state_digest(temp)
-    except Exception:
-        cleanup()
-        raise
-    return digest, path, temp, cleanup
+        complete = True
+        return digest, path, temp, cleanup
+    finally:
+        # `finally` rather than `except Exception`: an interrupt leaves a
+        # plaintext full export behind, and that is the one thing this
+        # directory must never survive.
+        if not complete:
+            cleanup()
 
 
 def temp_artifact(artifact: str) -> str:
@@ -364,8 +427,8 @@ def diff_artifacts(recipe: Recipe, fresh: Path) -> str:
     hashes already say they differ.
     """
     try:
-        stored = recipe.artifact_path().read_bytes()
-        body = fresh.read_bytes()
+        stored = vault.read(recipe, recipe.artifact_path())
+        body = vault.read(recipe, fresh)
     except OSError:
         return ""
     if not _is_text(stored) or not _is_text(body):

@@ -92,6 +92,28 @@ def test_sibling_switch_to_the_right_taps_the_switch():
     assert hit_target(nodes, label).bounds == Rect(900, 10, 980, 90)
 
 
+def test_sibling_switch_centred_over_a_two_line_row_taps_the_switch():
+    """The title sits above the row's centre, so the switch starts below it."""
+    nodes = screen(
+        xml_node(text="Allow installation of add-ons", bounds="[45,1889,624,1950]"),
+        xml_node(
+            cls="android.widget.Switch", checkable=True, checked=True, bounds="[903,1936,1035,2012]"
+        ),
+    )
+    label = resolve(nodes, Selector(text="Allow installation of add-ons"))
+    assert hit_target(nodes, label).checkable
+
+
+def test_radio_to_the_left_of_the_label_taps_the_radio():
+    nodes = screen(
+        xml_node(text="Brave", bounds="[316,1930,900,1991]"),
+        xml_node(cls="android.widget.RadioButton", checkable=True, bounds="[34,1902,169,2037]"),
+        xml_node(text="Brave", bounds="[0,1902,1000,2037]", clickable=True),
+    )
+    label = resolve(nodes, Selector(text="Brave"))
+    assert hit_target(nodes, label).class_name == "android.widget.RadioButton"
+
+
 def test_plain_row_taps_the_clickable_container():
     nodes = screen(
         xml_node(text="Backup", bounds="[0,0,1000,100]", clickable=True),

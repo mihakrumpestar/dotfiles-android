@@ -450,6 +450,17 @@ wheels = [
 ]
 
 [[package]]
+name = "secretspec"
+version = "0.21.1"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/16/f1/9690888c863b342b201aad9fa46298b8d68b4ebfb20b4fa90b41e83ca828/secretspec-0.21.1-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:f6716cfdf4cb6ecf2c3e04e6132ec6e5eeac4fab4c124a01abc20f5d7ebb46ff", size = 17504145, upload-time = "2026-09-27T00:35:30.411Z" },
+    { url = "https://files.pythonhosted.org/packages/5c/ae/e2222e962dfea3f721937092ac2a7e1f611643d6af675c26564314184e98/secretspec-0.21.1-cp39-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:5cce022334416815cdd86770d95fae0d849ad62ef03ce2ed75e31756bd975a0a", size = 20538280, upload-time = "2026-09-27T00:35:33.811Z" },
+    { url = "https://files.pythonhosted.org/packages/a2/5b/5cbaceaf5028568fe359897d069b0dcb583442d70ea0b7d53b62c0f06b47/secretspec-0.21.1-cp39-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:946af4b7c08ccf5db805aac4f1593794874b0a66e12854e842539f8ae8ad2e81", size = 20879751, upload-time = "2026-09-27T00:35:37.069Z" },
+    { url = "https://files.pythonhosted.org/packages/25/8c/2bfb605cc3f24a36ba332cde2ddb2ba6ccaa02acb21f7971c703a2b50f5e/secretspec-0.21.1-cp39-abi3-win_amd64.whl", hash = "sha256:867fea1b1bf04c83b69fe77f0db76c8d8032ffb49d7d8fe5a1d78e050e8ed322", size = 15928954, upload-time = "2026-09-27T00:35:40.129Z" },
+]
+
+[[package]]
 name = "uiautomator2"
 version = "3.7.1"
 source = { registry = "https://pypi.org/simple" }
@@ -471,6 +482,8 @@ name = "uiu"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "adbutils" },
+    { name = "secretspec" },
     { name = "uiautomator2" },
 ]
 
@@ -481,7 +494,11 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "uiautomator2", specifier = ">=3.2" }]
+requires-dist = [
+    { name = "adbutils", specifier = ">=2.12" },
+    { name = "secretspec", specifier = ">=0.21" },
+    { name = "uiautomator2", specifier = ">=3.2" },
+]
 
 [package.metadata.requires-dev]
 dev = [

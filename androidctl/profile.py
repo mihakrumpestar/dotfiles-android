@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Protocol
@@ -113,12 +114,7 @@ class KV:
         return render(self.prefix, *parts)
 
     def read(self, device: Device, entry: Entry) -> tuple[str, State]:
-        out = device.read(self.command("get", entry.namespace, entry.key))
-        value = out.strip()
-        # Both stores print `null` for a key that was never written.
-        if value == "null":
-            return "", State.UNSET
-        return value, State.EXPLICIT
+        return _kv_value(device.read(self.command("get", entry.namespace, entry.key)))
 
     def write(self, device: Device, entry: Entry) -> tuple[bool, str]:
         return _mutate(device, self.command("put", entry.namespace, entry.key, entry.value))
@@ -130,6 +126,15 @@ class KV:
 # The Settings provider and the separate device configuration store.
 SETTINGS = KV(("settings",), ("system", "secure", "global"))
 DEVICE_CONFIG = KV(("cmd", "device_config"))
+
+
+def _kv_value(out: str) -> tuple[str, State]:
+    """One key/value read: `null` means never written, anything else is explicit."""
+    value = out.strip()
+    # Both stores print `null` for a key that was never written.
+    if value == "null":
+        return "", State.UNSET
+    return value, State.EXPLICIT
 
 
 def render(prefix: tuple[str, ...], *parts: str) -> str:
@@ -285,13 +290,16 @@ class PermissionsStore:
 
 
 def _parse_permission(out: str, permission: str) -> tuple[str, State]:
-    """Read a permission's state from the first `User 0:` block only.
+    """Read a permission's state from a `User 0:` block that holds runtime ones.
 
-    The dump has one block per user; a grant in a work profile says nothing about
-    user 0. Install permissions sit outside the block and cannot be changed with
-    `pm grant`, so they must not match.
+    The dump has one block per user. Some apps print an earlier `User 0:` block
+    for domain verification, so the search continues until a block with a
+    `runtime permissions:` section is found. A grant in a work profile says
+    nothing about user 0. Install permissions sit outside the block and cannot be
+    changed with `pm grant`, so they must not match.
     """
     header = -1
+    runtime = False
     for raw in out.split("\n"):
         trimmed = raw.strip()
         if trimmed == "":
@@ -300,9 +308,19 @@ def _parse_permission(out: str, permission: str) -> tuple[str, State]:
         if header < 0:
             if trimmed.startswith("User 0:"):
                 header = indent
+                runtime = False
             continue
         if indent <= header:
-            return "", State.UNSET
+            header = -1
+            runtime = False
+            if trimmed.startswith("User 0:"):
+                header = indent
+            continue
+        if trimmed == "runtime permissions:":
+            runtime = True
+            continue
+        if not runtime:
+            continue
         name, separator, rest = trimmed.partition(":")
         if not separator or name != permission:
             continue
@@ -846,6 +864,257 @@ def read_all(device: Device, entries: Profile) -> dict[str, SnapshotEntry]:
             raise ProfileError(f"reading {key(entry)}: {error}") from error
         before[key(entry)] = SnapshotEntry(state=state, value=value)
     return before
+
+
+# One marker separates two commands' output inside one shell invocation. It
+# cannot occur in a package dump or a role list, so splitting on it is exact.
+_BULK_MARK = "__androidctl_bulk_mark__"
+
+
+def read_many(device: Device, entries: Profile) -> dict[str, tuple[str, State]]:
+    """Read many entries with as few device calls as possible.
+
+    The result is keyed by `key(entry)` and must be identical to what
+    `store_for(entry).read(device, entry)` returns for each entry, including
+    State (EXPLICIT/IMPLICIT/UNSET) and the empty string for an unset value.
+    """
+    groups: dict[str, Profile] = {}
+    for entry in entries:
+        groups.setdefault(_family(entry.namespace), []).append(entry)
+    values: dict[str, tuple[str, State]] = {}
+    for family, group in groups.items():
+        shipped = _shipped_store(family)
+        if shipped is None or not all(isinstance(store_for(e), shipped) for e in group):
+            # A store the bulk readers do not know (or a stand-in a test
+            # installed) is read one entry at a time, so the answer still comes
+            # from the store that owns the entry.
+            for entry in group:
+                values[key(entry)] = store_for(entry).read(device, entry)
+            continue
+        match family:
+            case "settings":
+                values.update(_kv_many(device, SETTINGS, group))
+            case "device_config":
+                values.update(_kv_many(device, DEVICE_CONFIG, group))
+            case "permissions":
+                values.update(_permissions_many(device, group))
+            case "appops":
+                values.update(_appops_many(device, group))
+            case "role":
+                values.update(_roles_many(device, group))
+            case "applinks":
+                values.update(_applinks_many(device, group))
+            case "deviceidle":
+                values.update(_deviceidle_many(device, group))
+            case _:
+                # Standby and locale are one call per app with nothing to share.
+                for entry in group:
+                    values[key(entry)] = store_for(entry).read(device, entry)
+    return {key(entry): values[key(entry)] for entry in entries}
+
+
+def _shipped_store(family: str) -> type | tuple[type, ...] | None:
+    """The store class a family's bulk reader speaks to, or None for no reader.
+
+    The three app-link stores share one `pm get-app-links`, so all three count
+    as the shipped holder of that family.
+    """
+    return {
+        "settings": KV,
+        "device_config": KV,
+        "permissions": PermissionsStore,
+        "appops": AppOpsStore,
+        "role": RoleStore,
+        "applinks": (AppLinksStore, AppLinksDomainStore, AppLinksSelectionStore),
+        "deviceidle": DeviceIdleStore,
+    }.get(family)
+
+
+def _family(namespace: str) -> str:
+    """The stores that can answer several namespaces from one read.
+
+    The three app-link sections share a `pm get-app-links`; the settings
+    namespaces share the `settings` prefix, never the device config one.
+    """
+    if namespace in SETTINGS.namespaces:
+        return "settings"
+    if namespace in _DEVICE_CONFIG_NAMESPACES:
+        return "device_config"
+    if namespace.startswith("applinks"):
+        return "applinks"
+    return namespace
+
+
+def _kv_many(device: Device, store: KV, entries: Profile) -> dict[str, tuple[str, State]]:
+    """List each namespace once; keys the list omits fall back to one `get`.
+
+    A multi-line value would not survive `list` intact, so a key the list does
+    not show is asked for on its own.
+    """
+    listed = {
+        namespace: _parse_kv_list(device.read(store.command("list", namespace)))
+        for namespace in dict.fromkeys(entry.namespace for entry in entries)
+    }
+    values: dict[str, tuple[str, State]] = {}
+    for entry in entries:
+        table = listed[entry.namespace]
+        if entry.key in table:
+            values[key(entry)] = _kv_value(table[entry.key])
+        else:
+            values[key(entry)] = store.read(device, entry)
+    return values
+
+
+def _parse_kv_list(out: str) -> dict[str, str]:
+    """`key=value` lines, split on the first `=`, because a value may hold one.
+
+    A value that spans lines arrives as continuation lines, which would leave
+    the key truncated, so a key with a continuation is dropped and read on its
+    own.
+    """
+    table: dict[str, str] = {}
+    last = ""
+    for line in out.split("\n"):
+        if line == "":
+            continue
+        entry_key, separator, value = line.partition("=")
+        if not separator:
+            table.pop(last, None)
+            last = ""
+            continue
+        table[entry_key] = value
+        last = entry_key
+    return table
+
+
+def _permissions_many(device: Device, entries: Profile) -> dict[str, tuple[str, State]]:
+    wanted: dict[str, list[tuple[Entry, str]]] = {}
+    for entry in entries:
+        parts = _split_package_key(entry.key)
+        if not _PERM_RE.fullmatch(parts.name):
+            raise ProfileError(f"invalid permission {_q(parts.name)}")
+        wanted.setdefault(parts.package, []).append((entry, parts.name))
+    dumps = _package_dumps(device, list(wanted))
+    values: dict[str, tuple[str, State]] = {}
+    for package, group in wanted.items():
+        for entry, permission in group:
+            values[key(entry)] = _parse_permission(dumps[package], permission)
+    return values
+
+
+def _package_dumps(device: Device, packages: list[str]) -> dict[str, str]:
+    """One package dump each, collected in a single shell invocation.
+
+    `dumpsys package a b` on this firmware prints only `a`'s dump and no
+    delimiter, so the dumps are asked for one at a time and separated by a
+    marker. `dumpsys package <pkg>` exits 0 for an unknown package, exactly as
+    the per-entry read assumes.
+    """
+    if len(packages) == 1:
+        return {packages[0]: device.read(render(("dumpsys", "package"), packages[0]))}
+    command = "; ".join(
+        f"{render(('dumpsys', 'package'), package)}; echo {_BULK_MARK}" for package in packages
+    )
+    parts = device.read(command).split(_BULK_MARK)
+    if len(parts) != len(packages) + 1 or parts[-1].strip() != "":
+        return {
+            package: device.read(render(("dumpsys", "package"), package)) for package in packages
+        }
+    return dict(zip(packages, parts[:-1]))
+
+
+def _appops_many(device: Device, entries: Profile) -> dict[str, tuple[str, State]]:
+    """One `cmd appops get <pkg>` per package answers every op of that package.
+
+    An op with no stored row is not in that list, and its default mode is only
+    printed for the single-op form, so those fall back to the per-entry read.
+    """
+    wanted: dict[str, list[tuple[Entry, str]]] = {}
+    for entry in entries:
+        parts = _split_package_key(entry.key)
+        if not _OP_RE.fullmatch(parts.name):
+            raise ProfileError(f"invalid app op {_q(parts.name)}")
+        wanted.setdefault(parts.package, []).append((entry, parts.name))
+    values: dict[str, tuple[str, State]] = {}
+    for package, group in wanted.items():
+        out = device.read(render(("cmd", "appops", "get"), package))
+        for entry, op in group:
+            if _has_app_op(out, op):
+                values[key(entry)] = _parse_app_op(out, op)
+            else:
+                values[key(entry)] = store_for(entry).read(device, entry)
+    return values
+
+
+def _has_app_op(out: str, op: str) -> bool:
+    """Whether the package list holds a row for the op, stored or uid-wide."""
+    for raw in out.split("\n"):
+        line = raw.strip().removeprefix("Uid mode:").strip()
+        name, separator, _ = line.partition(":")
+        if separator and name.strip() == op:
+            return True
+    return False
+
+
+# The three app-link sections each parse a different part of one dump.
+_APPLINKS_PARSERS: dict[str, Callable[[str, str], tuple[str, State]]] = {
+    "applinks_domain": _parse_domain_state,
+    "applinks_selection": _parse_selection_state,
+}
+
+
+def _applinks_many(device: Device, entries: Profile) -> dict[str, tuple[str, State]]:
+    """One `pm get-app-links` per package answers all three app-link sections."""
+    wanted: dict[str, list[tuple[Entry, str]]] = {}
+    for entry in entries:
+        if entry.namespace == "applinks":
+            wanted.setdefault(_package_key(entry.key), []).append((entry, ""))
+        else:
+            parts = _split_domain_key(entry.key)
+            wanted.setdefault(parts.package, []).append((entry, parts.name))
+    values: dict[str, tuple[str, State]] = {}
+    for package, group in wanted.items():
+        out = device.read(render(("pm", "get-app-links", "--user", "0"), package))
+        for entry, name in group:
+            if entry.namespace == "applinks":
+                values[key(entry)] = _parse_app_links(out)
+            else:
+                values[key(entry)] = _APPLINKS_PARSERS[entry.namespace](out, name)
+    return values
+
+
+def _deviceidle_many(device: Device, entries: Profile) -> dict[str, tuple[str, State]]:
+    """The whitelist is one read for every app asked about."""
+    packages = [_package_key(entry.key) for entry in entries]
+    out = device.read(render(("cmd", "deviceidle", "whitelist")))
+    return {
+        key(entry): _parse_device_idle(out, package)
+        for entry, package in zip(entries, packages, strict=True)
+    }
+
+
+def _roles_many(device: Device, entries: Profile) -> dict[str, tuple[str, State]]:
+    """Batch every role lookup into one shell invocation."""
+    for entry in entries:
+        if not _ROLE_RE.fullmatch(entry.key):
+            raise ProfileError(f"invalid role {_q(entry.key)}")
+    roles = list(dict.fromkeys(entry.key for entry in entries))
+    holders = _role_holders(device, roles)
+    return {key(entry): (holders[entry.key], State.EXPLICIT) for entry in entries}
+
+
+def _role_holders(device: Device, roles: list[str]) -> dict[str, str]:
+    if len(roles) == 1:
+        return {roles[0]: _parse_role(device.read(_role_command(roles[0])))}
+    command = "; ".join(f"{_role_command(role)}; echo {_BULK_MARK}" for role in roles)
+    parts = device.read(command).split(_BULK_MARK)
+    if len(parts) != len(roles) + 1 or parts[-1].strip() != "":
+        return {role: _parse_role(device.read(_role_command(role))) for role in roles}
+    return {role: _parse_role(part) for role, part in zip(roles, parts[:-1])}
+
+
+def _role_command(role: str) -> str:
+    return render(("cmd", "role", "get-role-holders"), role)
 
 
 def neutral(entry: Entry) -> Entry | None:

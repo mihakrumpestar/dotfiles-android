@@ -32,17 +32,18 @@ task disable -- policy/packages.txt
 task restore              # re-enable everything the newest snapshot saw enabled
 task init                 # install Shizuku-Next and Obtainium, start Shizuku
 task install -- dev.imranr.obtainium   # install an app from its release, checksum verified
-task apply                # dry run of profile.conf and apps.conf
+task apply                # dry run of profile.conf and every app file
 task apply -- --yes       # write both
-task verify               # report drift across both
+task verify               # report drift across every declared entry
 task revert               # restore the values captured before the last apply
 task ui-list              # app backup recipes and their stored artifacts
+task ui-setup -- --app <package>     # run the in-app setup walk
 task ui-backup -- --app <package>    # export an app's own state
 task ui-verify -- --app <package>    # re-export and diff
 task ui-restore -- --app <package>   # replay the artifact, guarded
 ```
 
-App directories live in `policy/data/<app>/`; the folder is the app's normalized name, lowercase and path friendly, e.g. `yamlauncher`. `steps.py` drives its backup and restore in `uiu`, written as Python step calls with `uiu.dsl`, and `install.json`, when present, holds the package id and release facts that `task install` and `task init` need. Each export is a snapshot of one phone. The artifact commits with the values a recipe marks `private` zeroed; only those live in `./secrets/<app>/`, its own repository, ignored here.
+An app directory lives in `policy/data/<app>/`; the folder is the app's normalized name, lowercase and path friendly, e.g. `yamlauncher`. One `app.py` holds everything about that app: its package id, its release facts when `task install` or `task init` needs them, the device state it needs, and its walks for setup, backup and restore. Each export is a snapshot of one phone. The artifact commits with the values the walk marks `private` zeroed; only those live in `./secrets/<app>/`, its own repository, ignored here.
 
 ## License
 

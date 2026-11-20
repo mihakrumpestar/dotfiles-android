@@ -1,12 +1,10 @@
-"""The recipe builder: a `steps.py` file in plain Python.
+"""The builder for an app file: plain Python, one function call per fact.
 
-A recipe is one app's walk through its own screens. Instead of a JSON tree,
-each step is a function call, so a typo is a Python error and the layout reads
-like the actions it performs:
+An app is one `app.py`, and its steps read like the gestures they perform:
 
-    from uiu.dsl import key, launch, pull, recipe, tap, wait
+    from uiu.dsl import app, key, launch, pull, tap, wait
 
-    RECIPE = recipe(
+    APP = app(
         package="com.example.demo",
         artifact="demo.json",
         backup=[
@@ -18,9 +16,9 @@ like the actions it performs:
         ],
     )
 
-The builder still runs the same validation as any other recipe: an empty
-selector, a path that leaves the export directory or a missing artifact is an
-error, never a silently ignored field.
+The builder runs the same validation as the engine that executes the steps: an
+empty selector, a path that leaves the export directory or a missing artifact is
+an error, never a silently ignored field.
 """
 
 from __future__ import annotations
@@ -29,6 +27,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from .recipe import Recipe, RecipeError, Selector, Step, parse_private, validate
+from .spec import App, build
 
 
 def _text(value: Any, where: str) -> str:
@@ -106,9 +105,15 @@ def tap(*, duration: int = 0, optional: bool = False, **selector: Any) -> Step:
     )
 
 
-def wait(*, timeout: float = 10.0, **selector: Any) -> Step:
+def wait(
+    *, timeout: float = 10.0, checked: bool | None = None, absent: bool = False, **selector: Any
+) -> Step:
     return _step(
-        "wait", selector=_selector("wait", selector), timeout=_number(timeout, "wait: timeout")
+        "wait",
+        selector=_selector("wait", selector),
+        timeout=_number(timeout, "wait: timeout"),
+        checked=None if checked is None else _flag(checked, "wait: checked"),
+        absent=_flag(absent, "wait: absent"),
     )
 
 
@@ -128,6 +133,14 @@ def assert_checked(checked: bool, **selector: Any) -> Step:
     )
 
 
+def ensure(checked: bool, **selector: Any) -> Step:
+    return _step(
+        "ensure",
+        checked=_flag(checked, "ensure: checked"),
+        selector=_selector("ensure", selector),
+    )
+
+
 def launch(component: str, *, clear: bool = False) -> Step:
     return _step(
         "launch",
@@ -140,12 +153,22 @@ def key(code: str) -> Step:
     return _step("key", code=_text(code, "key: code"))
 
 
-def scroll(direction: str = "down", *, times: int = 1) -> Step:
+def scroll(direction: str = "down", *, times: int = 1, until: Any = None) -> Step:
+    target = None
+    if until is not None:
+        if not isinstance(until, dict):
+            raise RecipeError("scroll: until is an object of selector keys")
+        target = _selector("scroll: until", until)
     return _step(
         "scroll",
         direction=_text(direction, "scroll: direction"),
         times=_whole(times, "scroll: times"),
+        selector=target,
     )
+
+
+def shell(command: str) -> Step:
+    return _step("shell", command=_text(command, "shell: command"))
 
 
 def sleep(seconds: float) -> Step:
@@ -181,12 +204,21 @@ def _steps(values: Iterable[Any], where: str) -> list[Step]:
     return steps
 
 
+def if_absent(*, steps: Iterable[Any], **selector: Any) -> Step:
+    return _step(
+        "if_absent",
+        selector=_selector("if_absent", selector),
+        steps=tuple(_steps(steps, "if_absent")),
+    )
+
+
 def recipe(
     *,
     package: str,
     backup: Iterable[Any],
     artifact: str = "",
     restore: Iterable[Any] = (),
+    setup: Iterable[Any] = (),
     volatile: Iterable[str] = (),
     redact: Iterable[str] = (),
     private: Iterable[str] | str = (),
@@ -209,6 +241,16 @@ def recipe(
         sort=[_text(item, "sort") for item in sort],
         backup=_steps(backup, "backup"),
         restore=_steps(restore, "restore"),
+        setup=_steps(setup, "setup"),
     )
     validate(built)
     return built
+
+
+def app(**facts: Any) -> App:
+    """Build one app: its package, install facts, device state and screen walk.
+
+    Every argument is keyword-only and checked here, so an app file that names a
+    permission or a step wrongly fails before the phone is touched.
+    """
+    return build(**facts)

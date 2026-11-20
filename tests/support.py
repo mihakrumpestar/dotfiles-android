@@ -5,12 +5,25 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import Any
 
 from uiu.device import ShellResult
 from uiu.dsl import recipe as build
 from uiu.recipe import Recipe, parse_step
+from uiu.spec import App
+from uiu.spec import build as build_app
 
 REPO = Path(__file__).resolve().parent.parent
+
+# A SOPS envelope in binary mode, shaped the way `sops --output-type binary`
+# writes one. Nothing in the suite can decrypt it: the vault's `run` seam and
+# the identity are injected, so only the shape is ever read.
+ENVELOPE = json.dumps(
+    {
+        "data": "ENC[AES256_GCM,data:YWJj,iv:Zm9v,tag:YmFy,type:str]",
+        "sops": {"mac": "ENC[AES256_GCM,data:bWFj,iv:Zm9v,tag:YmFy,type:str]"},
+    }
+).encode()
 
 VALID = {
     "package": "com.example.demo",
@@ -40,17 +53,45 @@ def recipe_from(mapping: dict) -> Recipe:
         sort=mapping.get("sort", []),
         backup=[parse_step(step) for step in mapping.get("backup", [])],
         restore=[parse_step(step) for step in mapping.get("restore", [])],
+        setup=[parse_step(step) for step in mapping.get("setup", [])],
     )
 
 
-def steps_file(mapping: dict | None = None) -> str:
-    """A `steps.py` body that builds the given recipe through the dict adapter."""
+def _pairs(raw: dict | None) -> dict[str, tuple[str, str]]:
+    """A JSON object of `name: [value, reason]` back into the tuple form."""
+    return {name: (pair[0], pair[1]) for name, pair in (raw or {}).items()}
+
+
+def app_from(mapping: dict[str, Any]) -> App:
+    """Build an app from the dict form tests use for mutations.
+
+    The app file is Python now, but a test that changes one field reads better
+    as a dict than as a string of code. JSON turns every tuple into a list, so
+    the device-state pairs are restored here.
+    """
+    doze = mapping.get("doze")
+    return build_app(
+        package=mapping.get("package", ""),
+        install=mapping.get("install"),
+        permissions=_pairs(mapping.get("permissions")),
+        appops=_pairs(mapping.get("appops")),
+        roles=mapping.get("roles", {}),
+        doze=tuple(doze) if doze is not None else None,
+        artifact=mapping.get("artifact", ""),
+        backup=[parse_step(step) for step in mapping.get("backup", [])],
+        restore=[parse_step(step) for step in mapping.get("restore", [])],
+        setup=[parse_step(step) for step in mapping.get("setup", [])],
+        volatile=mapping.get("volatile", []),
+        redact=mapping.get("redact", []),
+        private=mapping.get("private", []),
+        sort=mapping.get("sort", []),
+    )
+
+
+def app_file(mapping: dict | None = None) -> str:
+    """An `app.py` body that builds the given app through the dict adapter."""
     body = json.dumps(mapping if mapping is not None else VALID)
-    return (
-        "import json\n"
-        "from support import recipe_from\n"
-        f"RECIPE = recipe_from(json.loads({body!r}))\n"
-    )
+    return f"import json\nfrom support import app_from\nAPP = app_from(json.loads({body!r}))\n"
 
 
 def recipe_in(directory: Path, mapping: dict | None = None) -> Recipe:

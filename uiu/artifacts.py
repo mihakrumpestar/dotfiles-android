@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import difflib
 import hashlib
+import io
 import json
 import math
 import re
+import zipfile
 from typing import Any
 
 # The escape set of the committed files: quotes, backslashes, the five short
@@ -232,16 +234,47 @@ def sort_list(value: Any, path: list[str]) -> None:
     sort_list(value.get(path[0]), path[1:])
 
 
+_ZIP_MAGIC = b"PK\x03\x04"
+
+
+def _zip_form(body: bytes) -> bytes | None:
+    """The content form of a zip: one line per member, ordered by name.
+
+    A line is the member name, its size and the sha256 of its bytes, so two
+    archives holding the same members compare equal whatever their timestamps,
+    attributes, compression or member order. None for bytes that only claim to
+    be a zip and do not open as one.
+    """
+    if not body.startswith(_ZIP_MAGIC):
+        return None
+    try:
+        with zipfile.ZipFile(io.BytesIO(body)) as archive:
+            lines = []
+            for info in archive.infolist():
+                data = archive.read(info)
+                lines.append(f"{info.filename} {len(data)} {hashlib.sha256(data).hexdigest()}")
+    except zipfile.BadZipFile:
+        return None
+    return ("zip\n" + "".join(f"{line}\n" for line in sorted(lines))).encode()
+
+
 def canonical(body: bytes | str, volatile: list[str], sort_lists: list[str]) -> bytes:
     """The bytes two exports are compared on: volatile values masked, lists ordered.
 
-    A body that is not JSON has no canonical form, so it is returned unchanged;
-    the caller's diff then says the bytes differ.
+    A zip has a content form instead: one ``<name> <size> <sha256>`` line per
+    member, sorted by name, so timestamps and member order are not drift. A
+    body that is neither JSON nor a readable zip has no canonical form, so it
+    is returned unchanged; the caller's diff then says the bytes differ.
+    ``volatile`` and ``sort_lists`` mean nothing for a zip.
     """
+    raw = body.encode() if isinstance(body, str) else body
+    zipped = _zip_form(raw)
+    if zipped is not None:
+        return zipped
     try:
-        value = loads(body)
+        value = loads(raw)
     except ValueError:
-        return body.encode() if isinstance(body, str) else body
+        return raw
     for field in volatile:
         mask(value, field.split("."))
     for field in sort_lists:

@@ -8,6 +8,7 @@
   packages = with pkgs; [
     android-tools
     go-task
+    sops
     uv
   ];
 

@@ -20,6 +20,7 @@ from .runner import StepError
 from .split import SplitError
 from .store import DEFAULT_APPS, DEFAULT_STATE, Store, StoreError
 from .tree import TreeError
+from .vault import VaultError
 
 _ERRORS = (
     ArtifactError,
@@ -29,6 +30,7 @@ _ERRORS = (
     SplitError,
     StepError,
     StoreError,
+    VaultError,
     commands.CommandError,
     OSError,
 )
@@ -57,13 +59,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--apps",
         default=DEFAULT_APPS,
         metavar="DIR",
-        help="directory holding one folder per app, each with steps.py (default: policy/data)",
+        help="public policy tree, one folder per app with app.py; private app files are read too (default: policy/data)",
     )
     common.add_argument(
         "--secrets",
         default=None,
         metavar="DIR",
-        help="root of the private export tree (default: $ANDROID_SECRETS_DIR, else secrets)",
+        help="root of the private export tree and private app files (default: $ANDROID_SECRETS_DIR, else secrets)",
     )
     common.add_argument(
         "--state",
@@ -85,7 +87,7 @@ def build_parser() -> argparse.ArgumentParser:
     subcommands = parser.add_subparsers(dest="command", required=True)
 
     listing = subcommands.add_parser(
-        "list", parents=[common], help="list app recipes and whether each one has a stored export"
+        "list", parents=[common], help="list app files and whether each one has a stored export"
     )
     listing.set_defaults(handler="list")
 
@@ -136,6 +138,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="print each step's timing to stderr",
     )
     backup.set_defaults(handler="backup")
+
+    setting = subcommands.add_parser(
+        "setup",
+        parents=[common],
+        help="run a recipe's setup steps, which flip in-app state that has no export",
+    )
+    setting.add_argument(
+        "--app", required=True, metavar="PACKAGE", help="package id of the recipe to run"
+    )
+    setting.add_argument(
+        "--trace",
+        action="store_true",
+        default=_tracing(),
+        help="print each step's timing to stderr",
+    )
+    setting.set_defaults(handler="setup")
 
     verifying = subcommands.add_parser(
         "verify",
@@ -193,6 +211,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         if args.handler == "backup":
             return commands.backup(store, args.app, args.serial, trace=args.trace)
+        if args.handler == "setup":
+            return commands.setup(store, args.app, args.serial, trace=args.trace)
         if args.handler == "verify":
             return commands.verify(store, args.app, args.serial, trace=args.trace)
         return commands.restore(store, args.app, args.serial, force=args.force, trace=args.trace)

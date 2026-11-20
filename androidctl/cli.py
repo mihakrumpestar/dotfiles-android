@@ -98,12 +98,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bootstrapping.add_argument("--state", default=".state", help="Directory for downloads.")
 
-    applying = subparser("apply", "Apply profile.conf and apps.conf. Dry run unless --yes.")
+    applying = subparser("apply", "Apply profile.conf and every app file. Dry run unless --yes.")
     applying.add_argument("--files", action="append", help="Profiles to apply, in order.")
     applying.add_argument("--state", default=".state", help="Directory for the pre-apply snapshot.")
     applying.add_argument("--yes", action="store_true", help="Actually write.")
 
-    verifying = subparser("verify", "Report drift between the device and both profiles.")
+    verifying = subparser("verify", "Report drift between the device and the declared state.")
     verifying.add_argument("--files", action="append", help="Profiles to check, in order.")
 
     reverting = subparser("revert", "Restore the values captured before the last apply.")
@@ -134,9 +134,7 @@ def _run(args: argparse.Namespace) -> int:
         # reported even when no phone is attached.
         if args.command in ("apply", "verify"):
             chosen = _files(args.files)
-            commands.load_profiles(
-                chosen if chosen is not None else ["policy/profile.conf", "policy/apps.conf"]
-            )
+            commands.load_policy(chosen)
         packages = _packages(args.list) if args.command == "disable" else []
         spec = apps.load(args.app) if args.command == "install" else None
         specs = (

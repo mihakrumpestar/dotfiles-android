@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import TextIO, TypedDict
 
 from uiu import artifacts
+from uiu import spec as app_module
+from uiu.store import StoreError, app_files
 
 from . import apps, debloat, profile, ratings, snapshots
 from .adb import AdbError, Device
@@ -305,8 +307,7 @@ def apply(
     """Report every profile entry, and write the ones that differ with --yes."""
     stream: TextIO = out or sys.stdout
     errors: TextIO = err or sys.stderr
-    paths = files or ["policy/profile.conf", "policy/apps.conf"]
-    entries = load_profiles(paths)
+    entries = load_policy(files)
     installed = debloat.installed(device)
 
     applicable = []
@@ -318,7 +319,10 @@ def apply(
             continue
         applicable.append(entry)
 
-    before = profile.read_all(device, applicable)
+    before = {
+        name: profile.SnapshotEntry(state=state, value=value)
+        for name, (value, state) in profile.read_many(device, applicable).items()
+    }
 
     changed: dict[str, profile.SnapshotEntry] = {}
     for entry in entries:
@@ -379,20 +383,29 @@ def verify(
 ) -> int:
     """Report where the device differs from the profiles. Writes nothing."""
     stream: TextIO = out or sys.stdout
-    paths = files or ["policy/profile.conf", "policy/apps.conf"]
-    entries = load_profiles(paths)
+    entries = load_policy(files)
     installed = debloat.installed(device)
 
-    drift = 0
-    skipped = 0
+    applicable = []
+    skipped: dict[str, str] = {}
     for entry in entries:
-        key = profile.key(entry)
         missing = _missing_package(entry, installed)
         if missing:
-            skipped += 1
-            print(f"  {'skip':<6} {key}  ({missing} not installed)", file=stream)
+            skipped[profile.key(entry)] = missing
             continue
-        current, state = profile.store_for(entry).read(device, entry)
+        applicable.append(entry)
+
+    # One read per store family instead of one per entry: the settings list, the
+    # package dumps and the app-op tables each answer all their entries at once.
+    current_values = profile.read_many(device, applicable)
+
+    drift = 0
+    for entry in entries:
+        key = profile.key(entry)
+        if key in skipped:
+            print(f"  {'skip':<6} {key}  ({skipped[key]} not installed)", file=stream)
+            continue
+        current, state = current_values[key]
         if state == profile.State.UNSET:
             print(f"  unset   {key} (want {_quote(entry.value)})", file=stream)
             drift += 1
@@ -406,7 +419,7 @@ def verify(
             drift += 1
     if drift:
         raise CommandError(f"{drift} entr(ies) differ from the profile")
-    print(f"\nall entries match{_skip_note(skipped)}", file=stream)
+    print(f"\nall entries match{_skip_note(len(skipped))}", file=stream)
     return 0
 
 
@@ -645,6 +658,58 @@ def init_device(
 
 
 # ---------------------------------------------------------------- shared helpers
+
+
+def load_policy(
+    files: list[str] | None = None, apps: Path | str = "policy/data"
+) -> profile.Profile:
+    """Every declared entry: the phone's own settings plus one file per app.
+
+    The app files are what used to be `policy/apps.conf`, one per app, so a row
+    sits next to the app it belongs to. App files come from both the policy and
+    the private trees, so an app that must not be public still declares its
+    device state. A key declared twice is an error, because two sources
+    disagreeing about one value is a bug nobody would see.
+    """
+    sources: list[tuple[str, profile.Profile]] = []
+    for path in files or ["policy/profile.conf"]:
+        sources.append((path, load_profiles([path])))
+    try:
+        paths = app_files(apps)
+    except StoreError as error:
+        raise CommandError(str(error)) from error
+    for path in paths:
+        sources.append((str(path), _app_rows(path)))
+    merged: profile.Profile = []
+    seen: dict[str, str] = {}
+    for source, entries in sources:
+        for entry in entries:
+            name = profile.key(entry)
+            if name in seen:
+                raise CommandError(f"{source}: {name} is also declared in {seen[name]}")
+            seen[name] = source
+            merged.append(entry)
+    if not merged:
+        raise CommandError(f"no entries in {', '.join(files or ['policy/profile.conf'])}")
+    return merged
+
+
+def _app_rows(path: Path) -> profile.Profile:
+    """One app file's device-state rows, as profile entries.
+
+    The namespace and key are checked here, so a typo in an app file fails
+    before the device is opened, exactly as it would in a `.conf` profile.
+    """
+    try:
+        app = app_module.parse(path)
+    except app_module.RecipeError as error:
+        raise CommandError(str(error)) from error
+    rows: profile.Profile = []
+    for namespace, entry_key, value, reason in app.rows():
+        if profile.section_store(namespace) is None:
+            raise CommandError(f"{path}: unknown section [{namespace}]")
+        rows.append(profile.Entry(namespace, entry_key, value, reason))
+    return rows
 
 
 def load_profiles(paths: list[str]) -> profile.Profile:

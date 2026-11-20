@@ -1,11 +1,12 @@
-"""Recipe loading and validation: the contract a `steps.py` file has to satisfy.
+"""The recipe model: one app's walk through its own screens, and its rules.
 
-A recipe is one app's declarative walk through its own UI: a `backup` list of
-steps that exports its state and a `restore` list that writes it back. A recipe
-is Python, built with the functions in `uiu.dsl`, so a misspelled selector is a
-Python error before the phone is touched. Loading is strict: the file must set
-`RECIPE`, and validation rejects a step that cannot run, a bad selector or a path
-outside the app's own directory.
+A recipe is a `backup` list of steps that exports an app's state and a `restore`
+list that writes it back. A third list, `setup`, flips in-app state that has no
+export to compare, and may carry a `shell` step for a device command. It is
+built with the functions in `uiu.dsl`, so a misspelled selector is a Python
+error before the phone is touched. Validation rejects a step that cannot run, a
+bad selector or a path outside the app's own directory. An app file that
+carries a recipe is loaded by `uiu.spec`.
 """
 
 from __future__ import annotations
@@ -18,8 +19,10 @@ from typing import Any
 
 from .split import SplitError, parse_selection
 from .tree import Selector
+from .vault import Vault
+from .vault import read as vault_read
 
-STEPS_FILE = "steps.py"
+APP_FILE = "app.py"
 
 _ARTIFACT_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 _KEY_RE = re.compile(r"^[A-Za-z0-9_]+$")
@@ -40,11 +43,14 @@ _ACTIONS = (
     "assert",
     "capture",
     "clear",
+    "ensure",
+    "if_absent",
     "key",
     "launch",
     "pull",
     "push",
     "scroll",
+    "shell",
     "sleep",
     "tap",
     "type",
@@ -54,8 +60,10 @@ _ACTIONS = (
 # Argument key -> (attribute, kind). `from` and `to` are renamed because Python
 # takes both words, and the rest stay as close to the file as possible.
 _ARGUMENTS: dict[str, tuple[str, str]] = {
+    "absent": ("absent", "bool"),
     "clear": ("clear", "bool"),
     "code": ("code", "str"),
+    "command": ("command", "str"),
     "component": ("component", "str"),
     "checked": ("checked", "bool?"),
     "direction": ("direction", "str"),
@@ -66,6 +74,7 @@ _ARGUMENTS: dict[str, tuple[str, str]] = {
     "optional": ("optional", "bool"),
     "seconds": ("seconds", "float"),
     "selector": ("selector", "selector"),
+    "steps": ("steps", "steps"),
     "text": ("text", "str"),
     "timeout": ("timeout", "float"),
     "times": ("times", "int"),
@@ -76,15 +85,18 @@ _ACTION_ARGUMENTS: dict[str, tuple[str, ...]] = {
     "assert": ("checked", "selector"),
     "capture": ("name",),
     "clear": ("selector",),
+    "ensure": ("checked", "selector"),
+    "if_absent": ("selector", "steps"),
     "key": ("code",),
     "launch": ("clear", "component"),
     "pull": ("from", "newest", "to"),
     "push": ("from", "to"),
-    "scroll": ("direction", "times"),
+    "scroll": ("direction", "selector", "times"),
+    "shell": ("command",),
     "sleep": ("seconds",),
     "tap": ("duration", "optional", "selector"),
     "type": ("selector", "text"),
-    "wait": ("selector", "timeout"),
+    "wait": ("absent", "checked", "selector", "timeout"),
 }
 
 
@@ -111,6 +123,9 @@ class Step:
     newest: bool = False
     name: str = ""
     checked: bool | None = None
+    absent: bool = False
+    command: str = ""
+    steps: tuple[Step, ...] = ()
 
     def expand(self, artifact: str, package: str) -> Step:
         def fill(value: str) -> str:
@@ -135,14 +150,16 @@ class Step:
             source=fill(self.source),
             target=fill(self.target),
             name=fill(self.name),
+            command=fill(self.command),
             selector=chosen,
+            steps=tuple(step.expand(artifact, package) for step in self.steps),
         )
 
     def summary(self) -> str:
         """The part of a step that a trace line or an error message needs."""
         if self.selector is not None:
             return str(self.selector)
-        for value in (self.component, self.source, self.code, self.name):
+        for value in (self.component, self.source, self.code, self.name, self.command):
             if value:
                 return value
         if self.kind == "scroll":
@@ -163,12 +180,15 @@ class Recipe:
     sort: list[str] = field(default_factory=list)
     backup: list[Step] = field(default_factory=list)
     restore: list[Step] = field(default_factory=list)
+    setup: list[Step] = field(default_factory=list)
 
     # Filled by the store, never by the file, so a recipe cannot claim another
-    # app's directory.
+    # app's directory. The vault covers the export root, and None reads and
+    # writes plaintext.
     dir: Path | None = None
     data_dir: Path | None = None
     blob_dir: Path | None = None
+    vault: Vault | None = None
 
     @property
     def name(self) -> str:
@@ -198,9 +218,12 @@ class Recipe:
             self,
             backup=[step.expand(self.artifact, self.package) for step in self.backup],
             restore=[step.expand(self.artifact, self.package) for step in self.restore],
+            setup=[step.expand(self.artifact, self.package) for step in self.setup],
         )
 
     def with_data_dir(self, directory: Path) -> Recipe:
+        # The vault stays attached: a temporary directory is outside its root,
+        # so a verify export is written and read as plaintext.
         return replace(self, data_dir=directory, blob_dir=directory)
 
     def with_artifact(self, name: str) -> Recipe:
@@ -217,6 +240,15 @@ def _stem(artifact: str) -> str:
     return artifact.rsplit(".", 1)[0]
 
 
+def _text(recipe: Recipe, path: Path) -> str:
+    """Read a UTF-8 file through the recipe's vault, naming the path when it is not."""
+    body = vault_read(recipe, path)
+    try:
+        return body.decode()
+    except UnicodeDecodeError as error:
+        raise RecipeError(f"{path}: not UTF-8: {error}") from error
+
+
 def load_private(recipe: Recipe) -> Recipe:
     """Read the selector list a recipe keeps out of the repository.
 
@@ -229,7 +261,7 @@ def load_private(recipe: Recipe) -> Recipe:
         return recipe
     path = _join(recipe.data_dir, recipe.private_file)
     try:
-        body = _text(path)
+        body = _text(recipe, path)
     except OSError as error:
         raise RecipeError(f"reading {path}: {error.strerror or error}") from error
     try:
@@ -243,56 +275,6 @@ def load_private(recipe: Recipe) -> Recipe:
     loaded = replace(recipe, private=list(raw))
     validate_private_paths(loaded)
     return loaded
-
-
-def _text(path: Path) -> str:
-    """Read a recipe file as UTF-8, naming the encoding in the error, not a frame."""
-    body = path.read_bytes()
-    try:
-        return body.decode()
-    except UnicodeDecodeError as error:
-        raise RecipeError(f"{path}: not UTF-8: {error}") from error
-
-
-def parse(path: Path) -> Recipe:
-    """Load one app's recipe from `steps.py`, the way Python runs a script.
-
-    A recipe is committed policy, read from `policy/data`, not a plugin fetched
-    from the network, so it is executed in this process. It must set `RECIPE` to
-    the value `uiu.dsl.recipe` returns.
-    """
-    if path.name != STEPS_FILE:
-        raise RecipeError(f"{path}: a recipe must be named {STEPS_FILE}")
-    try:
-        body = _text(path)
-    except OSError as error:
-        raise RecipeError(f"reading {path}: {error.strerror or error}") from error
-    namespace: dict[str, Any] = {
-        "__file__": str(path),
-        "__name__": f"uiu_recipe_{path.parent.name}",
-    }
-    try:
-        # A recipe is committed policy in this repository, not a plugin fetched
-        # at runtime, so running it is the same trust boundary as any other file.
-        exec(compile(body, str(path), "exec"), namespace)  # noqa: S102
-    except RecipeError as error:
-        raise RecipeError(f"{path}: {error}") from error
-    except Exception as error:
-        raise RecipeError(f"{path}: {type(error).__name__}: {error}") from error
-    found = namespace.get("RECIPE")
-    if not isinstance(found, Recipe):
-        raise RecipeError(f"{path}: set RECIPE = recipe(...) at module level")
-    validate(found)
-    found.dir = path.parent
-    name = found.name
-    if name in ("", ".", "/"):
-        raise RecipeError(f"{path}: a recipe must sit in its own directory")
-    if not _NAME_RE.match(name):
-        raise RecipeError(
-            f'{path}: folder "{name}" is not a normalized app name; use lowercase letters,'
-            " digits, dot, dash or underscore, e.g. yamlauncher"
-        )
-    return found
 
 
 def parse_private(raw: Any) -> tuple[list[str], str]:
@@ -348,6 +330,16 @@ def parse_step(body: Any) -> Step:
 
 
 def _coerce(value: Any, expected: str, where: str) -> Any:
+    if expected == "steps":
+        if not isinstance(value, list):
+            raise RecipeError(f"{where}: a list of steps")
+        children: list[Step] = []
+        for position, child in enumerate(value):
+            try:
+                children.append(parse_step(child))
+            except RecipeError as error:
+                raise RecipeError(f"{where} {position + 1}: {error}") from error
+        return tuple(children)
     if expected == "selector":
         if not isinstance(value, dict):
             raise RecipeError(f"{where}: a selector object")
@@ -427,9 +419,8 @@ def validate(recipe: Recipe) -> None:
     for value in recipe.sort:
         if not value or any(char in value for char in " \t/"):
             raise RecipeError(f'invalid sort field "{value}"')
-    if not recipe.backup:
+    if not recipe.backup and not recipe.setup and not recipe.restore:
         raise RecipeError("backup is empty")
-
     expanded = recipe.expand()
     has_pull = False
     has_capture = False
@@ -448,6 +439,12 @@ def validate(recipe: Recipe) -> None:
         elif step.kind == "push":
             raise RecipeError(f"backup step {position + 1}: push belongs in restore, not backup")
 
+    for position, step in enumerate(expanded.setup):
+        try:
+            validate_step(step)
+        except RecipeError as error:
+            raise RecipeError(f"setup step {position + 1}: {error}") from error
+
     pushes_artifact = False
     for position, step in enumerate(expanded.restore):
         try:
@@ -464,6 +461,10 @@ def validate(recipe: Recipe) -> None:
         # capture something, and it must not export a file nothing reads back.
         if recipe.artifact:
             raise RecipeError("artifact is set but there is no restore flow")
+        if not recipe.backup:
+            # A setup-only recipe writes app state that has no export to compare,
+            # so it has neither an artifact nor a capture to account for.
+            return
         if has_pull:
             raise RecipeError("restore is empty but backup exports an artifact")
         if not has_capture:
@@ -471,10 +472,13 @@ def validate(recipe: Recipe) -> None:
         return
     if not recipe.artifact:
         raise RecipeError("restore is set but artifact is empty")
-    if not has_pull or not pulls_artifact:
-        raise RecipeError(f'backup never pulls the artifact "{recipe.artifact}"')
     if not pushes_artifact:
         raise RecipeError(f'restore never pushes the artifact "{recipe.artifact}"')
+    # A backup-less recipe pushes a file that is already stored: an app whose
+    # backup can be imported but never written back. There is no export to pull,
+    # so the pull check does not apply.
+    if recipe.backup and (not has_pull or not pulls_artifact):
+        raise RecipeError(f'backup never pulls the artifact "{recipe.artifact}"')
 
 
 def validate_private_paths(recipe: Recipe) -> None:
@@ -514,16 +518,25 @@ def validate_step(step: Step) -> None:
     elif step.kind == "type":
         if not step.text:
             raise RecipeError("type needs text")
-    elif step.kind in ("clear", "wait", "assert"):
+    elif step.kind in ("clear", "wait", "assert", "ensure"):
         if step.selector is None:
             raise RecipeError(f"{step.kind} needs selector")
-        if step.kind == "assert" and step.checked is None:
-            raise RecipeError("assert needs checked")
+        if step.kind in ("assert", "ensure") and step.checked is None:
+            raise RecipeError(f"{step.kind} needs checked")
+        if step.kind == "wait" and step.checked is not None and step.absent:
+            raise RecipeError("wait is either absent or checked, not both")
         if step.kind == "wait" and step.timeout <= 0:
             raise RecipeError("wait timeout must be positive")
     elif step.kind == "key":
         if not _KEY_RE.match(step.code):
             raise RecipeError(f'invalid key code "{step.code}"')
+    elif step.kind == "shell":
+        if not step.command:
+            raise RecipeError("shell needs command")
+        if not step.command.strip():
+            raise RecipeError("shell command is empty")
+        if "\n" in step.command:
+            raise RecipeError("shell command spans lines")
     elif step.kind == "scroll":
         if step.direction not in ("up", "down"):
             raise RecipeError(f'scroll direction "{step.direction}" is not up or down')
@@ -537,8 +550,9 @@ def validate_step(step: Step) -> None:
             raise RecipeError(f"{step.kind} needs from and to")
         if step.newest and step.kind != "pull":
             raise RecipeError("newest is only valid on pull")
-        # The local side always names a file in the app's export directory. A
-        # recipe may not read or write anywhere else on the host.
+        # The local side names a file in one of the recipe's two places: the
+        # artifact in the export root, or a payload beside app.py. Nothing
+        # outside them is reachable from a step.
         local = step.source if step.kind == "push" else step.target
         if local.startswith("/"):
             raise RecipeError(
@@ -547,13 +561,25 @@ def validate_step(step: Step) -> None:
         parts = local.split("/")
         if ".." in parts:
             raise RecipeError(f'{step.kind} local path "{local}" leaves the export directory')
-        if parts[-1] == STEPS_FILE:
-            raise RecipeError(f'{step.kind} local path "{local}" would overwrite the recipe')
+        if parts[-1] == APP_FILE:
+            raise RecipeError(f'{step.kind} local path "{local}" would overwrite the app file')
         if step.newest and (not _DEVICE_NEWEST_RE.match(step.source) or ".." in step.source):
             raise RecipeError(f'newest needs a plain glob under /sdcard, got "{step.source}"')
     elif step.kind == "capture":
         if not _ARTIFACT_RE.match(step.name) or step.name in (".", ".."):
             raise RecipeError(f'invalid capture name "{step.name}"')
+    elif step.kind == "if_absent":
+        if step.selector is None:
+            raise RecipeError("if_absent needs selector")
+        if not step.steps:
+            raise RecipeError("if_absent needs at least one step")
+        for position, child in enumerate(step.steps):
+            if child.kind in ("pull", "push", "capture", "if_absent"):
+                raise RecipeError(f"if_absent may not contain {child.kind}")
+            try:
+                validate_step(child)
+            except RecipeError as error:
+                raise RecipeError(f"if_absent step {position + 1}: {error}") from error
     else:
         raise RecipeError(f'unknown step "{step.kind}"')
     if step.selector is not None:

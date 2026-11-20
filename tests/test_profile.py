@@ -11,7 +11,9 @@ import pytest
 from support import REPO
 
 from androidctl.adb import AdbError, ShellResult
+from androidctl.commands import load_policy
 from androidctl.profile import (
+    _BULK_MARK,
     DEVICE_CONFIG,
     KV,
     SETTINGS,
@@ -44,6 +46,7 @@ from androidctl.profile import (
     parse,
     quote,
     read_all,
+    read_many,
     render,
     reset_ok,
     satisfied,
@@ -54,7 +57,11 @@ from androidctl.profile import (
 
 
 class FakeDevice:
-    """A device that answers reads by command and records every shell call."""
+    """A device that answers reads by command and records every shell call.
+
+    A command joined by `; echo MARK` is answered the way a shell would: each
+    part looked up on its own, its output followed by the marker line.
+    """
 
     serial = "fake"
 
@@ -84,7 +91,26 @@ class FakeDevice:
         self.reads.append(command)
         if self.read_error is not None:
             raise AdbError(self.read_error)
+        if f"; echo {_BULK_MARK}" in command:
+            return self._script(command)
         return self.answers.get(command, "")
+
+    def _script(self, command: str) -> str:
+        """Answer a `;`-joined script of reads and `echo MARK` lines."""
+        out: list[str] = []
+        statement: list[str] = []
+        for part in command.split(";"):
+            part = part.strip()
+            if part == f"echo {_BULK_MARK}":
+                if statement:
+                    out.append(self.answers.get("; ".join(statement), ""))
+                    statement = []
+                out.append(_BULK_MARK + "\n")
+                continue
+            statement.append(part)
+        if statement:
+            out.append(self.answers.get("; ".join(statement), ""))
+        return "".join(out)
 
 
 def check_command(build: Callable[[], str], want: str | None, want_error: str | None) -> None:
@@ -373,26 +399,25 @@ def test_reset_ok(entry: Entry, value: str, state: State, want: bool) -> None:
 
 
 def test_shipped_profile_parses() -> None:
-    # Two files, one declaration: settings in profile.conf, app-scoped state in
-    # apps.conf. Splitting them must not weaken what a parse guarantees.
-    profile: list[Entry] = []
-    for name in ("profile.conf", "apps.conf"):
-        parsed = parse((REPO / "policy" / name).read_text(encoding="utf-8"))
-        profile.extend(parsed)
-    assert len(profile) >= 30, f"profiles have only {len(profile)} entries"
+    # One declaration with two sources: settings in profile.conf, app-scoped
+    # state in each policy/data/*/app.py. `load_policy` is the production entry
+    # point, so it is what the shipped files must satisfy; it raises on a
+    # duplicate key or an unknown section instead of returning a merged list.
+    declaration = load_policy()
+    assert len(declaration) >= 30, f"profiles have only {len(declaration)} entries"
 
     seen: set[str] = set()
-    for entry in profile:
+    for entry in declaration:
         assert entry.reason != "", f"{entry.namespace}/{entry.key} has no reason"
         name = key(entry)
-        assert name not in seen, f"{name} is declared in both files"
+        assert name not in seen, f"{name} is declared twice"
         seen.add(name)
 
     # Every store must be exercised, or the merged command hides one of them.
-    assert any(store_for(entry) is SETTINGS for entry in profile)
-    assert any(store_for(entry) is DEVICE_CONFIG for entry in profile)
+    assert any(store_for(entry) is SETTINGS for entry in declaration)
+    assert any(store_for(entry) is DEVICE_CONFIG for entry in declaration)
     for store_type in (PermissionsStore, AppOpsStore, RoleStore, DeviceIdleStore):
-        assert any(isinstance(store_for(entry), store_type) for entry in profile), (
+        assert any(isinstance(store_for(entry), store_type) for entry in declaration), (
             f"no entry exercises the {store_type.__name__} store"
         )
 
@@ -1323,3 +1348,310 @@ def test_mutated_commands_quote_every_part(
 def test_equivalent_rejects_unknown_domain_value() -> None:
     assert equivalent(Entry("applinks_domain", "", "bogus"), "none") is False
     assert equivalent(Entry("applinks_domain", "", "none"), "bogus") is False
+
+
+def test_a_domain_verification_user_block_does_not_hide_the_runtime_block() -> None:
+    dump = """\
+Domain verification status:
+  com.example.app:
+    User 0:
+      Verification link handling allowed: true
+      Selection state:
+        Disabled:
+          example.com
+
+  User 0: ceDataInode=2
+    runtime permissions:
+      android.permission.POST_NOTIFICATIONS: granted=true, flags=[ USER_SET ]
+"""
+    assert _parse_permission(dump, "android.permission.POST_NOTIFICATIONS") == (
+        "granted",
+        State.EXPLICIT,
+    )
+
+
+OTHER_PACKAGE_DUMP = """Packages:
+  Package [com.other.app] (9c8b7a):
+    User 0: ceDataInode=3
+      runtime permissions:
+        android.permission.POST_NOTIFICATIONS: granted=true, flags=[ USER_SET ]
+        android.permission.CAMERA: granted=true, flags=[ USER_SET ]
+"""
+
+APP_LINKS_OUTPUT = """Domain verification status:
+  com.example.app:
+    ID: 4efb5a31-be8e-46a5-9722-f00474442875
+    Domain verification state:
+      example.com: verified
+    User 0:
+      Verification link handling allowed: true
+      Selection state:
+        Enabled:
+          example.com
+"""
+
+# A device that answers both the one-command-per-entry reads and the bulk
+# reads, so `read_many` and the per-entry `read` can be held against the same
+# output. A key the `list` path must not answer (absent, or folded onto a
+# second line) still has its own `get` answer, as on a phone.
+BULK_ANSWERS: dict[str, str] = {
+    "settings list system": "clock=24\nempty=\nname=two=parts\n",
+    "settings get system clock": "24\n",
+    "settings get system empty": "\n",
+    "settings get system name": "two=parts\n",
+    "settings get system missing": "null\n",
+    "settings list secure": "nulled=null\n",
+    "settings get secure nulled": "null\n",
+    "settings list global": "private_dns_mode=opportunistic\n",
+    "settings get global private_dns_mode": "opportunistic\n",
+    "cmd device_config list telephony": "ramping_ringer_enabled=true\n",
+    "cmd device_config get telephony ramping_ringer_enabled": "true\n",
+    "cmd device_config get telephony missing": "null\n",
+    "dumpsys package com.example.app": DUMPSYS_PACKAGE,
+    "dumpsys package com.other.app": OTHER_PACKAGE_DUMP,
+    "cmd appops get com.example.app": APP_OPS_OUTPUT,
+    "cmd appops get com.example.app CAMERA": "CAMERA: allow; time=+1h32m12s ago\n",
+    "cmd appops get com.example.app RECORD_AUDIO": "RECORD_AUDIO: ignore; time=+3d2h ago\n",
+    "cmd appops get com.example.app VIBRATE": "No operations.\nDefault mode: deny\n",
+    "cmd appops get com.example.app POST_NOTIFICATION": "No operations.\nDefault mode: deny\n",
+    "cmd role get-role-holders android.app.role.SMS": "org.fossify.messages\n",
+    "cmd role get-role-holders android.app.role.HOME": "\n",
+    "cmd deviceidle whitelist": ("user,com.example.app,10123\nsystem-excidle,com.other.app,1000\n"),
+    "am get-standby-bucket com.example.app": "10\n",
+    "cmd locale get-app-locales com.example.app": (
+        "Locales for com.example.app for user 0 are [en-US]\n"
+    ),
+    "pm get-app-links --user 0 com.example.app": APP_LINKS_OUTPUT,
+}
+
+
+def bulk_device() -> FakeDevice:
+    return FakeDevice(dict(BULK_ANSWERS))
+
+
+@pytest.mark.parametrize(
+    ("entries", "calls"),
+    [
+        pytest.param(
+            [
+                Entry("system", "clock"),
+                Entry("system", "empty"),
+                Entry("system", "name"),
+                Entry("system", "missing"),
+                Entry("secure", "nulled"),
+                Entry("global", "private_dns_mode"),
+            ],
+            [
+                "settings list system",
+                "settings list secure",
+                "settings list global",
+                "settings get system missing",
+            ],
+            id="settings namespaces: one list each, gets only for absent keys",
+        ),
+        pytest.param(
+            [
+                Entry("telephony", "ramping_ringer_enabled"),
+                Entry("telephony", "missing"),
+            ],
+            [
+                "cmd device_config list telephony",
+                "cmd device_config get telephony missing",
+            ],
+            id="device config",
+        ),
+        pytest.param(
+            [
+                Entry("permissions", "com.example.app:android.permission.CAMERA", "revoked"),
+                Entry("permissions", "com.example.app:android.permission.RECORD_AUDIO", "granted"),
+                Entry("permissions", "com.example.app:android.permission.BODY_SENSORS", "granted"),
+                Entry(
+                    "permissions", "com.other.app:android.permission.POST_NOTIFICATIONS", "granted"
+                ),
+            ],
+            [
+                (
+                    "dumpsys package com.example.app; echo __androidctl_bulk_mark__;"
+                    " dumpsys package com.other.app; echo __androidctl_bulk_mark__"
+                ),
+            ],
+            id="permissions: one dump per package in one invocation",
+        ),
+        pytest.param(
+            [Entry("permissions", "com.example.app:android.permission.CAMERA", "revoked")],
+            ["dumpsys package com.example.app"],
+            id="permissions: one package needs no marker",
+        ),
+        pytest.param(
+            [
+                Entry("appops", "com.example.app:CAMERA", "allow"),
+                Entry("appops", "com.example.app:RECORD_AUDIO", "ignore"),
+                Entry("appops", "com.example.app:VIBRATE", "deny"),
+                Entry("appops", "com.example.app:POST_NOTIFICATION", "deny"),
+            ],
+            [
+                "cmd appops get com.example.app",
+                "cmd appops get com.example.app VIBRATE",
+                "cmd appops get com.example.app POST_NOTIFICATION",
+            ],
+            id="app ops: one list per package, a get for an op it does not hold",
+        ),
+        pytest.param(
+            [Entry("role", "android.app.role.SMS"), Entry("role", "android.app.role.HOME")],
+            [
+                (
+                    "cmd role get-role-holders android.app.role.SMS; echo __androidctl_bulk_mark__;"
+                    " cmd role get-role-holders android.app.role.HOME; echo __androidctl_bulk_mark__"
+                ),
+            ],
+            id="roles: batched into one invocation",
+        ),
+        pytest.param(
+            [Entry("role", "android.app.role.SMS")],
+            ["cmd role get-role-holders android.app.role.SMS"],
+            id="role: one role needs no marker",
+        ),
+        pytest.param(
+            [
+                Entry("deviceidle", "com.example.app"),
+                Entry("deviceidle", "com.other.app"),
+            ],
+            ["cmd deviceidle whitelist"],
+            id="device idle: one whitelist shared",
+        ),
+        pytest.param(
+            [Entry("standby", "com.example.app")],
+            ["am get-standby-bucket com.example.app"],
+            id="standby: one read per entry",
+        ),
+        pytest.param(
+            [Entry("locale", "com.example.app")],
+            ["cmd locale get-app-locales com.example.app"],
+            id="locale: one read per entry",
+        ),
+        pytest.param(
+            [
+                Entry("applinks", "com.example.app"),
+                Entry("applinks_domain", "com.example.app:example.com"),
+                Entry("applinks_selection", "com.example.app:example.com"),
+            ],
+            ["pm get-app-links --user 0 com.example.app"],
+            id="app links: three stores share one read",
+        ),
+    ],
+)
+def test_read_many_agrees_with_the_per_entry_read(entries: list[Entry], calls: list[str]) -> None:
+    device = bulk_device()
+    got = read_many(device, entries)
+
+    assert device.reads == calls
+    assert device.shells == []
+    for entry in entries:
+        assert got[key(entry)] == store_for(entry).read(device, entry), key(entry)
+
+
+@pytest.mark.parametrize(
+    ("entry", "want"),
+    [
+        pytest.param(Entry("system", "clock"), ("24", State.EXPLICIT), id="listed value"),
+        pytest.param(Entry("system", "empty"), ("", State.EXPLICIT), id="listed empty value"),
+        pytest.param(Entry("system", "name"), ("two=parts", State.EXPLICIT), id="value holding ="),
+        pytest.param(Entry("system", "missing"), ("", State.UNSET), id="absent becomes unset"),
+        pytest.param(Entry("secure", "nulled"), ("", State.UNSET), id="listed null is unset"),
+        pytest.param(
+            Entry("permissions", "com.example.app:android.permission.CAMERA"),
+            ("revoked", State.EXPLICIT),
+            id="permission refused for user 0",
+        ),
+        pytest.param(
+            Entry("permissions", "com.example.app:android.permission.BODY_SENSORS"),
+            ("", State.UNSET),
+            id="permission absent from the dump",
+        ),
+        pytest.param(
+            Entry("appops", "com.example.app:VIBRATE"),
+            ("deny", State.IMPLICIT),
+            id="derived app op",
+        ),
+        pytest.param(
+            Entry("appops", "com.example.app:POST_NOTIFICATION"),
+            ("deny", State.IMPLICIT),
+            id="app op with no row",
+        ),
+        pytest.param(
+            Entry("role", "android.app.role.HOME"), ("", State.EXPLICIT), id="unheld role"
+        ),
+        pytest.param(
+            Entry("deviceidle", "com.other.app"), ("allow", State.IMPLICIT), id="system-excidle"
+        ),
+    ],
+)
+def test_read_many_states(entry: Entry, want: tuple[str, State]) -> None:
+    assert read_many(bulk_device(), [entry])[key(entry)] == want
+
+
+def test_a_second_packages_permission_is_not_answered_by_the_first_packages_dump() -> None:
+    # package one refuses CAMERA and never held POST_NOTIFICATIONS; package two
+    # grants both. A dump answered across the boundary would report one's
+    # values for two.
+    entries = [
+        Entry("permissions", "com.example.app:android.permission.POST_NOTIFICATIONS", "granted"),
+        Entry("permissions", "com.other.app:android.permission.CAMERA", "revoked"),
+        Entry("permissions", "com.other.app:android.permission.POST_NOTIFICATIONS", "granted"),
+        Entry("permissions", "com.example.app:android.permission.CAMERA", "granted"),
+    ]
+    got = read_many(bulk_device(), entries)
+
+    assert got["permissions/com.example.app:android.permission.POST_NOTIFICATIONS"] == (
+        "",
+        State.UNSET,
+    )
+    assert got["permissions/com.example.app:android.permission.CAMERA"] == (
+        "revoked",
+        State.EXPLICIT,
+    )
+    assert got["permissions/com.other.app:android.permission.CAMERA"] == ("granted", State.EXPLICIT)
+    assert got["permissions/com.other.app:android.permission.POST_NOTIFICATIONS"] == (
+        "granted",
+        State.EXPLICIT,
+    )
+
+
+def test_the_settings_list_and_the_get_fallback_agree() -> None:
+    device = FakeDevice(
+        {
+            # `folded` continues on a second line, so the list cannot carry it and
+            # `get` has to answer. `missing` is absent from the list altogether.
+            "settings list secure": "answered=1\nempty=\nfolded=first line\nsecond line\n",
+            "settings get secure answered": "1\n",
+            "settings get secure empty": "\n",
+            "settings get secure folded": "first line\nsecond line\n",
+            "settings get secure missing": "null\n",
+        }
+    )
+    entries = [
+        Entry("secure", "answered"),
+        Entry("secure", "empty"),
+        Entry("secure", "folded"),
+        Entry("secure", "missing"),
+    ]
+    got = read_many(device, entries)
+
+    assert device.reads == [
+        "settings list secure",
+        "settings get secure folded",
+        "settings get secure missing",
+    ]
+    for entry in entries:
+        assert got[key(entry)] == store_for(entry).read(device, entry), key(entry)
+    assert got["secure/answered"] == ("1", State.EXPLICIT)
+    assert got["secure/empty"] == ("", State.EXPLICIT)
+    assert got["secure/folded"] == ("first line\nsecond line", State.EXPLICIT)
+    assert got["secure/missing"] == ("", State.UNSET)
+
+
+def test_read_many_reads_nothing_for_an_empty_profile() -> None:
+    device = bulk_device()
+    assert read_many(device, []) == {}
+    assert device.reads == []
+    assert device.shells == []
