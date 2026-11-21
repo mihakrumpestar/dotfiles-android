@@ -4,7 +4,7 @@ Its settings are one JSON, so the walk imports the file committed beside this on
 and accepts the restart the app offers, which is what applies it.
 """
 
-from uiu.dsl import app, if_absent, launch, push, scroll, shell, sleep, tap, wait
+from uiu.dsl import app, if_absent, launch, push, scroll, shell, sleep, tap, type_text, wait
 
 APP = app(
     package="app.morphe.android.youtube",
@@ -35,25 +35,24 @@ APP = app(
         tap(text="Import / Export", id="android:id/title"),
         wait(text="Import from file"),
         tap(text="Import from file"),
-        # The picker opens at the last used folder and keeps a search box open
-        # between runs, so the walk goes through the roots list to Download. Its
-        # toolbar slides while the picker appears, so the tap waits for that.
+        # The picker opens at the last used folder and whatever it last sorted
+        # by, so the file is found through its search box instead of a scroll.
+        # The search icon and the field it opens sit in the toolbar the drawer
+        # hides from the dump, so both are tapped by point on a 1080x2340 screen.
         sleep(2),
-        # The roots button toggles a drawer that may already be open, so a tap
-        # that left Download hidden is followed by one more.
         tap(desc="Show roots"),
         sleep(1),
         if_absent(text="Downloads", steps=[tap(desc="Show roots"), sleep(1)]),
         wait(text="Downloads"),
         tap(text="Downloads"),
         sleep(1),
-        # The list opens on whatever the picker last sorted by, so the file can be
-        # on screen without scrolling.
-        if_absent(
-            text_contains="youtube-revanced.json",
-            steps=[scroll("down", times=8, until={"text_contains": "youtube-revanced.json"})],
-        ),
-        tap(id="android:id/title", text_contains="youtube-revanced.json"),
+        shell("input tap 877 168"),
+        sleep(1),
+        shell("input tap 400 168"),
+        type_text("youtube-revanced.json"),
+        sleep(3),
+        # The field holds the same text, so the row is picked by class.
+        tap(text="youtube-revanced.json", class_name="android.widget.TextView"),
         # The box only fills once the file has been read, and Save is what
         # writes the preferences.
         wait(text="Save"),
