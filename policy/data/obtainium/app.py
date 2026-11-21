@@ -24,6 +24,16 @@ APP = app(
         wait(desc="Import/export", class_name="android.widget.Button"),
         tap(desc="Import/export", class_name="android.widget.Button"),
         wait(desc="Obtainium export", class_name="android.widget.Button"),
+        # The selector list decides which entries stay out of the public
+        # artifact; the export must include them so the private half is whole.
+        if_absent(
+            text="All",
+            steps=[
+                tap(text="Exclude secrets"),
+                sleep(1),
+                tap(desc="All"),
+            ],
+        ),
         tap(desc="Obtainium export", class_name="android.widget.Button"),
         # With the export set to "All", Obtainium warns that the file holds
         # secrets before writing it; with any other setting there is no dialog.
@@ -66,22 +76,22 @@ APP = app(
         tap(desc="Continue"),
         sleep(3),
     ],
-    volatile=[
+    omit=[
+        "appVersion",
         "exportedAt",
+        "settings.lastCompletedBGCheckTime",
+        "settings.updateHealthFilteredReleasesCount",
         "apps.lastUpdateCheck",
         "apps.latestVersionChangedAt",
-        "apps.latestVersion",
         "apps.installedVersion",
         "apps.releaseDate",
         "apps.releaseUrl",
-        "apps.apkUrls",
         "apps.otherAssetUrls",
         "apps.apkSizeBytes",
         "apps.changeLog",
         "apps.consecutiveFailedChecks",
         "apps.newerReleasesFilteredOut",
         "apps.updateHealthDismissedVersion",
-        "apps.updateHealthEnabled",
         "apps.isArchived",
         "apps.pendingRepoRenameUrl",
     ],

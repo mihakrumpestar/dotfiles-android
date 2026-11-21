@@ -4,7 +4,7 @@ Apps and settings that both phones use. Debloat the stock phone first, see [Debl
 
 ## Apps
 
-Use Obtainium as the only app store. Its export is the app list: set it up once, export it, and import it on the next phone. No second copy lives in this repository.
+Use Obtainium as the only app store. Its export is the app list: set it up once, export it, and import it on the next phone. `task ui-backup -- --app dev.imranr.obtainium` stores it in `policy/data/obtainium/obtainium.json`. `uiu` drops installed versions, changelogs, update timestamps, asset sizes and the extra asset lists, and orders the apps by package id, so the file records the app list and its per-app settings rather than the phone's update history. Obtainium refills the dropped state on its next check.
 
 On a fresh phone, enable USB debugging, attach the cable, and run:
 
@@ -206,14 +206,21 @@ A plain path moves one value out. A path with an identity moves one list element
 ```sh
 task ui-list                                  # app files and whether an export is stored
 task ui-setup -- --app com.aurora.store       # run the in-app setup walk
+task ui-setup -- --app com.sec.android.app.clockpackage  # 05:40 weekday alarm
+task ui-setup -- --app com.android.settings              # Sleeping Do Not Disturb rule
+task ui-setup -- --app md.obsidian                       # Nextcloud sync plugin, so the vault can sync itself
 task ui-backup -- --app eu.ottop.yamlauncher  # export and store
 task ui-verify -- --app eu.ottop.yamlauncher  # re-export and diff
 task ui-restore -- --app eu.ottop.yamlauncher # push the stored export back
 ```
 
+Obsidian has one walk and one prerequisite: create the vault with the same name as the desktop's, because that name is the remote folder. The walk installs the Nextcloud sync plugin, and the first sync pulls the notes, the attachments and the other plugin settings.
+
 The engine is `uiu`, run with `uv run uiu`; the `task ui-*` names call it. It drives the phone through uiautomator2, whose server runs as the shell user, so nothing is installed on the device. A step is one action: `launch`, `tap`, `type`, `clear`, `wait`, `key`, `scroll`, `sleep`, `pull`, `push`, `capture`, `assert`, `shell`, `ensure` and `if_absent`.
 
 Selectors match on `text`, `id`, `desc` or `textContains`, plus `index` for duplicates. They never use coordinates. A `type` without a selector writes into the field the previous step focused, which is the way into a search box with no label. `launch` with `"clear": true` stops the app first, so a run starts at the root screen. `pull` with `"newest": true` takes the newest match of a device glob. A pull waits for the file instead of a recipe sleeping first.
+
+A control a webview draws without any label cannot be selected, so a step reaches it with `shell` and `input tap` at a point. Only Obsidian does this, for the settings gear at the bottom right of its drawer; the point assumes a 1080x2340 screen.
 
 Some steps exist because a run has to be safe to repeat. `ensure` taps a row only when its checked state differs. `if_absent` runs a block of steps only when its selector matches nothing, which is how a one-time item is created without creating a second copy. `wait` takes `checked` to wait on a switch, `absent` to wait for a dialog to go away, and `scroll` takes `until` to stop as soon as the target appears.
 

@@ -190,6 +190,27 @@ def mask(value: Any, path: list[str]) -> None:
     mask(value.get(path[0]), path[1:])
 
 
+def remove(value: Any, path: list[str]) -> None:
+    """Drop a field, creating nothing.
+
+    A path the export omits stays absent: removing is idempotent, so a stored
+    artifact that already lacks the field and a fresh export that still has it
+    compare equal.
+    """
+    if not path:
+        return
+    if isinstance(value, list):
+        for item in value:
+            remove(item, path)
+        return
+    if not isinstance(value, dict):
+        return
+    if len(path) == 1:
+        value.pop(path[0], None)
+        return
+    remove(value.get(path[0]), path[1:])
+
+
 def zero(value: Any, path: list[str]) -> None:
     """Replace a value with the zero of its type, so a restore resets it."""
     if not path:
@@ -217,7 +238,13 @@ def zero(value: Any, path: list[str]) -> None:
 
 
 def sort_list(value: Any, path: list[str]) -> None:
-    """Order a list by each element's canonical bytes, so app ordering is not drift."""
+    """Order a list so app ordering is not drift.
+
+    An element carrying a string `id` sorts by that id, because it is the
+    stable identity and does not move when the element's settings change. Any
+    other element sorts by its canonical bytes, which keeps lists without an
+    identity deterministic.
+    """
     if not path:
         return
     if isinstance(value, list):
@@ -229,9 +256,15 @@ def sort_list(value: Any, path: list[str]) -> None:
     if len(path) == 1:
         items = value.get(path[0])
         if isinstance(items, list):
-            value[path[0]] = sorted(items, key=_compact)
+            value[path[0]] = sorted(items, key=_list_key)
         return
     sort_list(value.get(path[0]), path[1:])
+
+
+def _list_key(item: Any) -> tuple[int, str]:
+    if isinstance(item, dict) and isinstance(item.get("id"), str):
+        return (0, item["id"])
+    return (1, _compact(item))
 
 
 _ZIP_MAGIC = b"PK\x03\x04"
@@ -258,14 +291,23 @@ def _zip_form(body: bytes) -> bytes | None:
     return ("zip\n" + "".join(f"{line}\n" for line in sorted(lines))).encode()
 
 
-def canonical(body: bytes | str, volatile: list[str], sort_lists: list[str]) -> bytes:
-    """The bytes two exports are compared on: volatile values masked, lists ordered.
+def canonical(
+    body: bytes | str,
+    volatile: list[str],
+    sort_lists: list[str],
+    *,
+    omit: list[str] | tuple[str, ...] = (),
+) -> bytes:
+    """The bytes two exports are compared on.
 
-    A zip has a content form instead: one ``<name> <size> <sha256>`` line per
-    member, sorted by name, so timestamps and member order are not drift. A
-    body that is neither JSON nor a readable zip has no canonical form, so it
-    is returned unchanged; the caller's diff then says the bytes differ.
-    ``volatile`` and ``sort_lists`` mean nothing for a zip.
+    Omitted values are removed, volatile values masked, and lists ordered, so a
+    field that is deliberately not stored and an app order the phone chooses
+    are not drift. A zip has a content form instead: one ``<name> <size>
+    <sha256>`` line per member, sorted by name, so timestamps and member order
+    are not drift. A body that is neither JSON nor a readable zip has no
+    canonical form, so it is returned unchanged; the caller's diff then says the
+    bytes differ. ``volatile``, ``sort_lists`` and ``omit`` mean nothing for a
+    zip.
     """
     raw = body.encode() if isinstance(body, str) else body
     zipped = _zip_form(raw)
@@ -275,8 +317,33 @@ def canonical(body: bytes | str, volatile: list[str], sort_lists: list[str]) -> 
         value = loads(raw)
     except ValueError:
         return raw
+    for field in omit:
+        remove(value, field.split("."))
     for field in volatile:
         mask(value, field.split("."))
+    for field in sort_lists:
+        sort_list(value, field.split("."))
+    return dumps(value)
+
+
+def normalize(
+    body: bytes | str,
+    omit: list[str] | tuple[str, ...],
+    sort_lists: list[str],
+) -> bytes:
+    """The bytes an export may be stored as: omitted fields gone, lists ordered.
+
+    This is the stored form, not the comparison form: nothing is masked, so a
+    field that is not kept is absent rather than a placeholder. A non-JSON body
+    is returned unchanged, because omission and ordering are JSON operations.
+    """
+    raw = body.encode() if isinstance(body, str) else body
+    try:
+        value = loads(raw)
+    except ValueError:
+        return raw
+    for field in omit:
+        remove(value, field.split("."))
     for field in sort_lists:
         sort_list(value, field.split("."))
     return dumps(value)

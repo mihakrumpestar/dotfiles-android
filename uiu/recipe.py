@@ -174,6 +174,7 @@ class Recipe:
     package: str = ""
     artifact: str = ""
     volatile: list[str] = field(default_factory=list)
+    omit: list[str] = field(default_factory=list)
     redact: list[str] = field(default_factory=list)
     private: list[str] = field(default_factory=list)
     private_file: str = ""
@@ -405,7 +406,11 @@ def validate(recipe: Recipe) -> None:
         raise RecipeError(
             f'invalid artifact "{recipe.artifact}": use only letters, digits, dot, dash, underscore'
         )
-    for name, fields in (("volatile", recipe.volatile), ("redact", recipe.redact)):
+    for name, fields in (
+        ("volatile", recipe.volatile),
+        ("omit", recipe.omit),
+        ("redact", recipe.redact),
+    ):
         for value in fields:
             if not value or any(char in value for char in " \t/"):
                 raise RecipeError(f'invalid {name} field "{value}"')

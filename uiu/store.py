@@ -280,7 +280,9 @@ def artifact_digest(recipe: Recipe, path: Path | None = None) -> str:
     export time into the file.
     """
     body = vault.read(recipe, path or recipe.artifact_path())
-    return hashlib.sha256(artifacts.canonical(body, recipe.volatile, recipe.sort)).hexdigest()
+    return hashlib.sha256(
+        artifacts.canonical(body, recipe.volatile, recipe.sort, omit=recipe.omit)
+    ).hexdigest()
 
 
 def state_digest(recipe: Recipe, artifact: Path | None = None) -> str:
@@ -305,7 +307,9 @@ def state_digest(recipe: Recipe, artifact: Path | None = None) -> str:
                 " and without it the state cannot be compared or restored"
             )
         body = split.merge_export(body, vault.read(recipe, overlay), recipe.private)
-    return hashlib.sha256(artifacts.canonical(body, recipe.volatile, recipe.sort)).hexdigest()
+    return hashlib.sha256(
+        artifacts.canonical(body, recipe.volatile, recipe.sort, omit=recipe.omit)
+    ).hexdigest()
 
 
 def write_new_file(to: Path, body: bytes) -> None:

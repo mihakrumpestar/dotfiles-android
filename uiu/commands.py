@@ -433,8 +433,8 @@ def diff_artifacts(recipe: Recipe, fresh: Path) -> str:
         return ""
     if not _is_text(stored) or not _is_text(body):
         return ""
-    old = artifacts.canonical(stored, recipe.volatile, recipe.sort)
-    new = artifacts.canonical(body, recipe.volatile, recipe.sort)
+    old = artifacts.canonical(stored, recipe.volatile, recipe.sort, omit=recipe.omit)
+    new = artifacts.canonical(body, recipe.volatile, recipe.sort, omit=recipe.omit)
     return artifacts.diff(old, new, recipe.artifact)
 
 

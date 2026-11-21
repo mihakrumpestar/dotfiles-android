@@ -9,7 +9,7 @@ from uiu.dsl import app, if_absent, push, scroll, shell, sleep, tap, wait
 APP = app(
     package="com.twitter.android",
     permissions={
-        "android.permission.POST_NOTIFICATIONS": ("granted", "mention and message notices"),
+        "android.permission.POST_NOTIFICATIONS": ("revoked", "notifications kept off"),
     },
     # Piko opens its own settings from a deep link, which is a shorter way in
     # than the navigation drawer.

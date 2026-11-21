@@ -123,14 +123,60 @@ def test_compact_form_has_no_separator_whitespace():
 
 def test_digests_match_the_go_tool():
     expected = {
-        "obtainium": "d19c7010033fd5269ddeeae7422bc96860de4b780eb02a61fbd51402901c12e5",
-        "yamlauncher": "600ae3aaa52476844e201d7784092eb66a24169149c5e87d8052f14304d21526",
+        "obtainium": "8120ac000d5f365291a51cedabad4905faac0740175eba1f8e81d22b9a5eac6d",
+        "yamlauncher": "64b3c89e0c78338c44e3f2d24b69b9a8941c2f098909700d572908c4c357b037",
     }
     for app, digest in expected.items():
         recipe = spec.parse(REPO / "policy/data" / app / "app.py").recipe
         assert recipe is not None
         recipe.blob_dir = REPO / "policy/data" / app
         assert stores.artifact_digest(recipe) == digest, app
+
+
+def test_canonical_omits_fields_and_orders_by_id():
+    body = (
+        b'{"exportedAt": 1, "apps": ['
+        b'{"id": "b", "latestVersion": "2"}, {"id": "a", "latestVersion": "1"}]}'
+    )
+    assert artifacts.canonical(
+        body, [], ["apps"], omit=["exportedAt", "apps.latestVersion"]
+    ) == artifacts.dumps({"apps": [{"id": "a"}, {"id": "b"}]})
+
+
+def test_normalize_drops_omitted_fields_and_orders_apps():
+    body = (
+        b'{"exportedAt": 1, "apps": ['
+        b'{"id": "b", "latestVersion": "2"}, {"id": "a", "latestVersion": "1"}]}'
+    )
+    got = json.loads(artifacts.normalize(body, ["exportedAt", "apps.latestVersion"], ["apps"]))
+    assert got == {"apps": [{"id": "a"}, {"id": "b"}]}
+
+
+def test_omit_walks_lists_and_never_creates_a_field():
+    body = b'{"apps": [{"id": "a", "v": 1}, {"id": "b"}]}'
+    got = json.loads(artifacts.normalize(body, ["apps.v", "missing.field"], ["apps"]))
+    assert got == {"apps": [{"id": "a"}, {"id": "b"}]}
+
+
+def test_obtainium_artifact_is_trimmed_and_ordered():
+    store = stores.Store(apps=REPO / "policy/data", secrets=REPO / "secrets")
+    recipe = store.load("dev.imranr.obtainium").recipe
+    data = json.loads(recipe.vault.read(recipe.artifact_path()))
+    ids = [app["id"] for app in data["apps"]]
+    assert ids == sorted(ids)
+    required = {"id", "url", "name", "author", "additionalSettings", "latestVersion", "apkUrls"}
+    dropped = {
+        "installedVersion",
+        "changeLog",
+        "releaseDate",
+        "lastUpdateCheck",
+        "latestVersionChangedAt",
+        "otherAssetUrls",
+        "apkSizeBytes",
+    }
+    for app in data["apps"]:
+        assert required <= set(app)
+        assert not (dropped & set(app))
 
 
 def test_canonical_masks_volatile_and_orders_lists():

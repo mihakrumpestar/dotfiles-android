@@ -29,6 +29,8 @@ task restore                                    # roll back the newest snapshot
 
 The list names only packages that exist on the firmware it targets. An absent package is reported as drift, not a failure. Delete it rather than leaving it to fail forever.
 
+Samsung Keyboard is not in the list. Samsung protects the package: `pm disable-user` fails and the app's Disable button is greyed out. The system also re-adds its IME to `secure/enabled_input_methods`, so the keyboard stays listed; HeliBoard is the default. Its clipboard access is denied in `policy/data/samsungkeyboard/app.py`, which stops the "pasted from your clipboard" notice. The same profile entry keeps Google voice input out of the enabled list.
+
 ### Reading the report
 
 ```

@@ -295,6 +295,7 @@ RECIPE_CASES = [
     ("bad package", {"package": "com.example/app"}, "invalid package"),
     ("bad artifact", {"artifact": "a b.json"}, "invalid artifact"),
     ("bad volatile", {"volatile": ["a/b"]}, "invalid volatile field"),
+    ("bad omit", {"omit": ["a/b"]}, "invalid omit field"),
     ("bad sort", {"sort": [" a"]}, "invalid sort field"),
     ("bad private field", {"private": ["a b"]}, "invalid private field"),
     ("bad private selector", {"private": ["apps[id]"]}, "identity selector"),

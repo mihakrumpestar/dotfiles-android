@@ -349,6 +349,8 @@ class Runner:
         body = staged.read_bytes()
         if self.recipe.redact:
             body = artifacts.redact(body, self.recipe.redact)
+        if self.recipe.omit or self.recipe.sort:
+            body = artifacts.normalize(body, self.recipe.omit, self.recipe.sort)
         overlay = None
         if self.recipe.is_private:
             if not self.recipe.private:
@@ -358,6 +360,8 @@ class Runner:
                 )
             result = split.split_export(body, self.recipe.private)
             body, overlay = result.public, result.private
+            if self.recipe.omit or self.recipe.sort:
+                overlay = artifacts.normalize(overlay, self.recipe.omit, self.recipe.sort)
             for field in result.unmatched:
                 # Not fatal: an app may omit a field entirely, and the recipe
                 # keeps a guard for the day it appears. A typo looks the same,

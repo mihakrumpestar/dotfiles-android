@@ -24,6 +24,10 @@ com.sec.android.gallery3d
 # My Files, superseded by Material Files.
 com.sec.android.app.myfiles
 
+# Huawei AppGallery, Revolut's installer source. Install Revolut from it
+# before disabling it; Obtainium installs AppGallery on a fresh phone.
+com.huawei.appmarket
+
 # Diagnostics that report usage. Neither is rated Recommended upstream.
 com.sec.android.diagmonagent
 com.samsung.android.cidmanager
